@@ -384,12 +384,13 @@ export class DataService extends Emitter {
       .sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || a.createdAt - b.createdAt);
   }
 
-  async createNode({ type, name, parentId = null, topic = '' }) {
+  async createNode({ type, name, parentId = null, topic = '', ...extra }) {
     if (!this.can('manageNodes')) throw new OpError('forbidden');
     const sib = this.children(parentId);
     const node = {
       id: uid(), type, name: name.trim().slice(0, 100), parentId, topic: topic.trim().slice(0, 300),
       order: (sib.at(-1)?.order ?? 0) + 1, createdBy: this.me.id, createdAt: Date.now(), updatedAt: Date.now(), lastMessageAt: 0,
+      ...extra,
     };
     const res = await this.#mutate('node:create', node, () => this.#applyNode(node, true));
     if (res?.node) await this.#applyNode(res.node);
@@ -458,16 +459,27 @@ export class DataService extends Emitter {
     return idb.get('messages', id);
   }
 
-  async sendMessage(roomId, { content = '', files: fileList = [], replyTo = null }) {
+  /**
+   * 메시지 보내기. kind: 'text' | 'me' | 'poll'
+   * poll: { options: [텍스트], multi }, spoilers: [첨부 인덱스], forward: 전달할 원본 메시지 객체
+   */
+  async sendMessage(roomId, {
+    content = '', files: fileList = [], replyTo = null, kind = 'text', poll = null, spoilers = [], forward = null,
+  }) {
     if (!this.can('sendMessage')) throw new OpError('forbidden');
-    const text = content.trim().slice(0, 4000);
-    if (!text && !fileList.length) return null;
+    const room = this.nodes.get(roomId);
+    if (room?.readonly && !this.can('manageNodes')) throw new OpError('readonly');
+    if (kind === 'poll' && !this.can('react')) throw new OpError('forbidden');
+    let text = content.trim().slice(0, 4000);
+    if (forward) text = forward.kind === 'poll' ? `📊 ${forward.content}` : forward.content || '';
+    if (!text && !fileList.length && !forward?.attachments?.length) return null;
     for (const f of fileList) {
       if (f.size > this.maxUploadBytes) throw new OpError('file_too_large');
     }
     const createdAt = Date.now();
-    const attachments = fileList.map((f) => ({
+    const attachments = forward ? (forward.attachments || []).map((a) => ({ ...a, local: false })) : fileList.map((f, i) => ({
       id: uid(), name: f.name || 'file', size: f.size, mime: f.type || 'application/octet-stream', kind: kindOf(f.type), expiresAt: createdAt + this.fileTtlMs, local: true,
+      ...(spoilers.includes(i) ? { spoiler: true } : {}),
     }));
     // 화면에 먼저 보여주고(저장소 쓰기를 기다리지 않음), 저장은 뒤에서 진행
     fileList.forEach((f, i) => files.remember(attachments[i], f));
@@ -475,10 +487,21 @@ export class DataService extends Emitter {
     const msg = {
       id: uid(),
       roomId,
+      kind: forward ? 'text' : kind,
       authorId: this.me.id,
       author: { nickname: this.me.nickname, provider: this.me.provider },
       content: text,
       attachments,
+      ...(kind === 'poll' && poll ? {
+        poll: { multi: !!poll.multi, options: poll.options.map((o, i) => ({ id: `o${i + 1}`, text: o.trim().slice(0, 100), votes: [] })) },
+      } : {}),
+      ...(forward ? {
+        forwardOf: forward.id,
+        forwarded: {
+          messageId: forward.forwarded?.messageId || forward.id,
+          roomId: forward.roomId, roomName: this.nodes.get(forward.roomId)?.name || '', authorId: forward.authorId, authorNickname: (this.user(forward.authorId) || forward.author)?.nickname || '', createdAt: forward.createdAt,
+        },
+      } : {}),
       replyTo: reply ? reply.id : null,
       replyPreview: reply ? preview(reply) : null,
       reactions: {},
@@ -507,7 +530,16 @@ export class DataService extends Emitter {
   /** 첨부 업로드 → 메시지 전송. 연결 문제면 outbox 에 저장 */
   async #deliver(msg, blobsSaved = null) {
     const payload = {
-      id: msg.id, roomId: msg.roomId, content: msg.content, attachments: msg.attachments.map((a) => a.id), replyTo: msg.replyTo, createdAt: msg.createdAt,
+      id: msg.id,
+      roomId: msg.roomId,
+      content: msg.content,
+      attachments: msg.attachments.filter((a) => a.local).map((a) => a.id),
+      replyTo: msg.replyTo,
+      createdAt: msg.createdAt,
+      kind: msg.kind,
+      ...(msg.poll ? { poll: { multi: msg.poll.multi, options: msg.poll.options.map((o) => o.text) } } : {}),
+      spoilers: msg.attachments.filter((a) => a.spoiler).map((a) => a.id),
+      ...(msg.forwardOf ? { forward: { messageId: msg.forwardOf } } : {}),
     };
     const remaining = msg.attachments.filter((a) => a.local).map((a) => a.id);
     if (this.isOnline) {
@@ -554,7 +586,49 @@ export class DataService extends Emitter {
     if (!m || m.authorId !== this.me.id || m.failed || (m.pending && this.isOnline)) throw new OpError('forbidden');
     const text = content.trim().slice(0, 4000);
     if (!text && !m.attachments?.length) throw new OpError('empty');
-    await this.#mutate('msg:edit', { id, content: text }, () => this.#applyMessage({ ...m, content: text, editedAt: Date.now() }, true));
+    if (text === m.content) return;
+    const editHistory = [...(m.editHistory || []), { content: m.content, at: m.editedAt || m.createdAt }].slice(-20);
+    await this.#mutate('msg:edit', { id, content: text }, () => this.#applyMessage({
+      ...m, content: text, editedAt: Date.now(), editHistory,
+    }, true));
+  }
+
+  /** 투표하기 / 취소 */
+  async vote(id, optionId) {
+    if (!this.can('react')) throw new OpError('forbidden');
+    const m = await idb.get('messages', id);
+    if (!m?.poll || m.failed || (m.pending && this.isOnline)) return;
+    const me = this.me.id;
+    const on = !m.poll.options.find((o) => o.id === optionId)?.votes.includes(me);
+    const options = m.poll.options.map((o) => {
+      if (o.id === optionId) return { ...o, votes: on ? [...o.votes, me] : o.votes.filter((v) => v !== me) };
+      if (on && !m.poll.multi) return { ...o, votes: o.votes.filter((v) => v !== me) };
+      return o;
+    });
+    await this.#mutate('msg:vote', { id, optionId, on }, () => this.#applyMessage({ ...m, poll: { ...m.poll, options } }, true));
+  }
+
+  /** 방 통계 (메시지 수, 고정 수, 참여자 수) */
+  async roomStats(roomId) {
+    if (this.isOnline) {
+      try {
+        const r = await this.request('room:stats', { roomId });
+        return { count: r.count, pins: r.pins, authors: r.authors };
+      } catch (e) {
+        if (!isConnectivity(e)) throw e;
+      }
+    }
+    const all = await idb.roomAll(roomId);
+    return { count: all.length, pins: all.filter((m) => m.pinned).length, authors: new Set(all.map((m) => m.authorId)).size, local: true };
+  }
+
+  /** 접속 상태: online | idle | dnd | offline (나 자신은 invisible 도 반환) */
+  presenceOf(userId) {
+    const u = this.users.get(userId);
+    if (userId === this.me?.id) return this.isOnline ? (this.me.presence || 'online') : 'offline';
+    if (!this.online.has(userId)) return 'offline';
+    const p = u?.presence || 'online';
+    return p === 'invisible' ? 'offline' : p;
   }
 
   async deleteMessage(id) {
@@ -607,21 +681,39 @@ export class DataService extends Emitter {
     return (await idb.roomAll(roomId)).filter((m) => m.pinned).sort((a, b) => (b.pinnedAt || 0) - (a.pinnedAt || 0));
   }
 
-  async search(roomId, q) {
-    const query = q.trim();
-    if (!query) return [];
+  /**
+   * 검색. { roomId(null 이면 전체 방), q, from(userId), has(image|video|audio|file|media|link|pin|poll), before, after(ms), mentions }
+   */
+  async search(f) {
+    const filter = typeof f === 'string' ? { q: f } : { ...f };
+    filter.q = (filter.q || '').trim();
+    const any = filter.q || filter.from || filter.has || filter.before || filter.after || filter.mentions;
+    if (!any) return [];
     if (this.isOnline) {
       try {
-        return (await this.request('msg:search', { roomId, q: query })).messages;
+        return (await this.request('msg:search', filter)).messages;
       } catch (e) {
         if (!isConnectivity(e)) throw e;
       }
     }
-    const lower = query.toLowerCase();
-    return (await idb.roomAll(roomId))
-      .filter((m) => (m.content || '').toLowerCase().includes(lower) || (m.attachments || []).some((a) => a.name.toLowerCase().includes(lower)))
-      .sort((a, b) => b.createdAt - a.createdAt)
-      .slice(0, 50);
+    const lower = filter.q.toLowerCase();
+    const mentionRe = filter.mentions ? new RegExp(`(^|\\s)@(${this.me.nickname.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}|everyone|here)(?=\\s|$)`) : null;
+    const pool = filter.roomId ? await idb.roomAll(filter.roomId) : await idb.all('messages');
+    const kinds = (m) => (m.attachments || []).map((a) => a.kind);
+    return pool.filter((m) => {
+      if (lower && !(m.content || '').toLowerCase().includes(lower) && !(m.attachments || []).some((a) => a.name.toLowerCase().includes(lower))) return false;
+      if (filter.from && m.authorId !== filter.from) return false;
+      if (filter.before && !(m.createdAt < filter.before)) return false;
+      if (filter.after && !(m.createdAt >= filter.after)) return false;
+      if (mentionRe && !mentionRe.test(m.content || '')) return false;
+      const h = filter.has;
+      if (['image', 'video', 'audio', 'file'].includes(h) && !kinds(m).includes(h)) return false;
+      if (h === 'media' && !kinds(m).some((k) => k === 'image' || k === 'video')) return false;
+      if (h === 'link' && !/https?:\/\//i.test(m.content || '')) return false;
+      if (h === 'pin' && !m.pinned) return false;
+      if (h === 'poll' && m.kind !== 'poll') return false;
+      return true;
+    }).sort((a, b) => b.createdAt - a.createdAt).slice(0, filter.has ? 100 : 50);
   }
 
   /** 연결 진단: 전송 방식, 서버 왕복 시간, 서버↔MongoDB 시간 */

@@ -9,7 +9,11 @@ import { createSidebar } from './ui/sidebar.js';
 import { createChatView } from './ui/chat.js';
 import { createCallView } from './ui/callview.js';
 import { createPanels } from './ui/panels.js';
-import { applyTheme, settings, openServerSettings } from './ui/dialogs.js';
+import {
+  applyTheme, settings, openServerSettings, listSetting, settingsChanged, shortcutsDialog,
+} from './ui/dialogs.js';
+import { roomNotify, blocked, reminders } from './local.js';
+import { sounds } from './sounds.js';
 import { openModal, confirmDialog, emptyState, closeMenu } from './ui/common.js';
 import { icon } from './ui/icons.js';
 
@@ -82,7 +86,7 @@ function start(session) {
     if (!node || node.type === 'folder') return showEmpty();
     closeDrawer();
     closeMenu();
-    if (location.hash !== `#/room/${id}`) {
+    if (!location.hash.startsWith(`#/room/${id}`)) {
       if (replace) history.replaceState(null, '', `#/room/${id}`); else history.pushState(null, '', `#/room/${id}`);
     }
     store.set('cs.lastRoom', id);
@@ -95,8 +99,10 @@ function start(session) {
       if (panels.kind === 'pins' || panels.kind === 'search') ctx.togglePanel(null);
     } else {
       content.replaceChildren(chat.el);
+      const since = ctx.lastRead[id] || 0;
+      const hadUnread = ctx.unread.has(id) || (node.lastMessageAt || 0) > since;
       ctx.markRead(id);
-      await chat.open(id);
+      await chat.open(id, { since: hadUnread ? since : 0 });
     }
     ctx.emit('room', id);
   };
@@ -112,6 +118,11 @@ function start(session) {
     layout.classList.toggle('panel-open', !!next);
   };
 
+  ctx.searchFrom = (u) => {
+    panels.search(`from:${u.nickname}`, true);
+    layout.classList.add('panel-open');
+  };
+
   function openDrawer() { layout.classList.add('drawer-open'); }
   function closeDrawer() { layout.classList.remove('drawer-open'); }
   ctx.openDrawer = openDrawer;
@@ -121,8 +132,7 @@ function start(session) {
     store.set('cs.unread', Object.fromEntries(ctx.unread));
     store.set('cs.mentions', [...ctx.mentions]);
     store.set('cs.lastRead', ctx.lastRead);
-    const total = [...ctx.unread.values()].reduce((a, b) => a + b, 0);
-    document.title = total ? `(${total > 99 ? '99+' : total}) ${config.appName}` : config.appName;
+    updateBadges();
   };
 
   ctx.markRead = (roomId) => {
@@ -135,26 +145,108 @@ function start(session) {
     if (changed) ctx.emit('unread');
   };
 
+  ctx.markAllRead = () => {
+    for (const n of data.nodes.values()) if (n.type === 'text') ctx.lastRead[n.id] = Date.now();
+    ctx.unread.clear();
+    ctx.mentions.clear();
+    persistUnread();
+    ctx.emit('unread');
+    toast('모두 읽음으로 표시했습니다.');
+  };
+
+  // 파비콘 · 앱 아이콘에 안 읽은 수 표시
+  const favicon = document.querySelector('link[rel="icon"]');
+  const baseIcon = favicon?.href;
+  let iconImg = null;
+  function updateBadges() {
+    const total = [...ctx.unread.entries()].filter(([id]) => roomNotify.get(id) !== 'none').reduce((a, [, b]) => a + b, 0);
+    const mention = ctx.mentions.size > 0;
+    document.title = total ? `(${total > 99 ? '99+' : total}) ${config.appName}` : config.appName;
+    try { if (navigator.setAppBadge) { if (total) navigator.setAppBadge(total); else navigator.clearAppBadge(); } } catch { /* noop */ }
+    if (!favicon) return;
+    if (!total) { favicon.href = baseIcon; return; }
+    const draw = () => {
+      const c = document.createElement('canvas');
+      c.width = c.height = 64;
+      const g = c.getContext('2d');
+      g.drawImage(iconImg, 0, 0, 64, 64);
+      g.fillStyle = mention ? '#f0b232' : '#ed4245';
+      g.beginPath(); g.arc(46, 46, 18, 0, Math.PI * 2); g.fill();
+      g.fillStyle = mention ? '#000' : '#fff';
+      g.font = 'bold 22px sans-serif';
+      g.textAlign = 'center';
+      g.textBaseline = 'middle';
+      g.fillText(total > 9 ? '9+' : String(total), 46, 47);
+      favicon.href = c.toDataURL('image/png');
+    };
+    if (iconImg?.complete) draw();
+    else { iconImg = new Image(); iconImg.onload = draw; iconImg.src = baseIcon; }
+  }
+  ctx.on('unread', updateBadges);
+
   data.on('message', (m, info) => {
-    if (!info?.isNew || m.authorId === data.me.id) return;
+    if (!info?.isNew || m.authorId === data.me.id || blocked.has(m.authorId)) return;
     const viewing = ctx.roomId === m.roomId && document.visibilityState === 'visible' && chat.atBottom;
     if (viewing) { ctx.markRead(m.roomId); return; }
+    const mode = roomNotify.get(m.roomId);
+    const mention = mentionsMe(m.content, data.me, listSetting('keywords'));
     ctx.unread.set(m.roomId, (ctx.unread.get(m.roomId) || 0) + 1);
-    const mention = mentionsMe(m.content, data.me);
     if (mention) ctx.mentions.add(m.roomId);
     persistUnread();
     ctx.emit('unread');
+    // 알림 조건: 방 알림 설정 · 전체 알림 범위 · 방해 금지
+    const dnd = data.me.presence === 'dnd';
+    const wanted = !dnd && mode !== 'none' && (mention || (mode === 'all' && settings.notifyMode === 'all'));
+    if (!wanted) return;
+    if (settings.sound) (mention ? sounds.mention : sounds.message)();
+    if (settings.vibrate && document.hidden) navigator.vibrate?.(mention ? [80, 60, 80] : 60);
     if (settings.notify && 'Notification' in window && Notification.permission === 'granted' && (document.hidden || ctx.roomId !== m.roomId)) {
       const u = data.user(m.authorId);
       const room = data.nodes.get(m.roomId);
+      const body = !settings.notifyPreview ? '새 메시지가 도착했습니다.' : m.kind === 'poll' ? `📊 ${m.content}` : m.content?.slice(0, 140) || '📎 첨부파일';
       try {
         const n = new Notification(`${u?.nickname || m.author?.nickname || '새 메시지'} · #${room?.name || ''}`, {
-          body: m.content?.slice(0, 140) || '📎 첨부파일', tag: m.roomId, icon: safeImageUrl(u?.avatar) || undefined, silent: !mention,
+          body, tag: m.roomId, icon: safeImageUrl(u?.avatar) || undefined, silent: true,
         });
-        n.onclick = () => { window.focus(); ctx.openRoom(m.roomId); n.close(); };
+        n.onclick = () => { window.focus(); ctx.jumpTo(m.roomId, m.id); n.close(); };
       } catch { /* noop */ }
     }
   });
+
+  // 리마인더 (/remind)
+  const reminderTimer = setInterval(() => {
+    const due = reminders.list().filter((r) => r.at <= Date.now());
+    for (const r of due) {
+      reminders.remove(r.id);
+      if (settings.sound) sounds.reminder();
+      toast(`⏰ 리마인더: ${r.text}`, 'warn', 10000);
+      if ('Notification' in window && Notification.permission === 'granted') {
+        try { new Notification('⏰ 리마인더', { body: r.text, tag: r.id }); } catch { /* noop */ }
+      }
+    }
+  }, 5000);
+
+  // 자동 자리 비움 (10분 동안 활동이 없으면)
+  let lastActive = Date.now();
+  let autoIdle = false;
+  const onActive = () => {
+    lastActive = Date.now();
+    if (autoIdle && data.isOnline) { autoIdle = false; data.updateProfile({ presence: 'online' }).catch(() => {}); }
+  };
+  for (const ev of ['pointerdown', 'keydown', 'focus']) window.addEventListener(ev, onActive, { passive: true });
+  const idleTimer = setInterval(() => {
+    if (!autoIdle && data.isOnline && (data.me.presence || 'online') === 'online' && Date.now() - lastActive > 10 * 60_000) {
+      autoIdle = true;
+      data.updateProfile({ presence: 'idle' }).catch(() => {});
+    }
+  }, 30_000);
+
+  // 설정이 바뀌면 메시지 다시 그리기 (단어 필터, 키워드, 시간 형식 등)
+  const onSettings = (patch) => {
+    if (['filterWords', 'keywords', 'embeds', 'autoloadMedia', 'clock24'].some((k) => k in patch)) ctx.emit('rerender');
+  };
+  settingsChanged.add(onSettings);
+
   document.addEventListener('visibilitychange', () => { if (!document.hidden && ctx.roomId && chat.atBottom) ctx.markRead(ctx.roomId); });
 
   // ───────── 연결 상태 배너 ─────────
@@ -202,7 +294,13 @@ function start(session) {
 
   // ───────── 라우팅 ─────────
   const routeId = () => location.hash.match(/^#\/room\/([\w-]+)/)?.[1];
-  const onHash = () => { const id = routeId(); if (id && id !== ctx.roomId && data.nodes.has(id)) ctx.openRoom(id, { replace: true }); };
+  const routeMsg = () => location.hash.match(/^#\/room\/[\w-]+\/m\/([\w-]+)/)?.[1];
+  const onHash = () => {
+    const id = routeId();
+    const mid = routeMsg();
+    if (id && data.nodes.has(id) && mid) ctx.jumpTo(id, mid);
+    else if (id && id !== ctx.roomId && data.nodes.has(id)) ctx.openRoom(id, { replace: true });
+  };
   window.addEventListener('hashchange', onHash);
   window.addEventListener('popstate', onHash);
 
@@ -217,7 +315,12 @@ function start(session) {
       const want = routeId() || store.get('cs.lastRoom', null);
       const first = [...data.nodes.values()].filter((n) => n.type === 'text').sort((a, b) => a.createdAt - b.createdAt)[0];
       const target = (want && data.nodes.has(want) && want) || (!initialized && first?.id);
-      if (target) { initialized = true; ctx.openRoom(target, { replace: true }); } else if (!initialized) showEmpty();
+      if (target) {
+        initialized = true;
+        const mid = routeMsg();
+        if (mid && target === routeId()) ctx.jumpTo(target, mid);
+        else ctx.openRoom(target, { replace: true });
+      } else if (!initialized) showEmpty();
     }
   });
 
@@ -265,8 +368,30 @@ function start(session) {
     const m = openModal({ title: '빠른 이동', cls: 'qs-modal', body: [input, results] });
     render();
   }
+  // 사이드바에 보이는 순서대로 방 목록 (폴더 펼침과 무관하게 트리 순서)
+  const orderedRooms = () => {
+    const out = [];
+    const walk = (pid) => { for (const n of data.children(pid)) { if (n.type === 'folder') walk(n.id); else out.push(n); } };
+    walk(null);
+    return out;
+  };
+  const isUnread = (n) => n.type === 'text' && roomNotify.get(n.id) !== 'none' && (ctx.unread.has(n.id) || (n.lastMessageAt || 0) > (ctx.lastRead[n.id] || 0));
   const onKey = (e) => {
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); quickSwitcher(); }
+    const mod = e.ctrlKey || e.metaKey;
+    if (mod && e.key.toLowerCase() === 'k') { e.preventDefault(); quickSwitcher(); }
+    if (mod && e.key === '/') { e.preventDefault(); shortcutsDialog(); }
+    if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+      e.preventDefault();
+      const rooms = orderedRooms();
+      const d = e.key === 'ArrowDown' ? 1 : -1;
+      const i = rooms.findIndex((n) => n.id === ctx.roomId);
+      for (let k = 1; k <= rooms.length; k++) {
+        const n = rooms[(i + d * k + rooms.length * 2) % rooms.length];
+        if (!n) break;
+        if (!e.shiftKey || isUnread(n)) { ctx.openRoom(n.id); return; }
+      }
+      if (e.shiftKey) toast('안 읽은 방이 없습니다.');
+    }
   };
   document.addEventListener('keydown', onKey);
 
@@ -289,12 +414,17 @@ function start(session) {
   data.on('error', (e) => toast(e.message, 'error'));
   data.init(session, saveSession).then(() => {
     if (!data.nodes.size) showEmpty();
+    updateBadges();
   });
+  window.addEventListener('pointerdown', () => sounds.unlock(), { once: true });
 
   return {
     destroy() {
       calls.leave();
       data.destroy();
+      clearInterval(reminderTimer);
+      clearInterval(idleTimer);
+      settingsChanged.delete(onSettings);
       document.removeEventListener('keydown', onKey);
       window.removeEventListener('hashchange', onHash);
       window.removeEventListener('popstate', onHash);

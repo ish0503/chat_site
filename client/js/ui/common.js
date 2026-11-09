@@ -3,7 +3,12 @@ import { PROVIDER_LABEL } from '../permissions.js';
 import { icon } from './icons.js';
 
 // ───────── 아바타 / 로그인 종류 배지 ─────────
-export function avatar(user, size = 40, { online } = {}) {
+export const PRESENCE_LABEL = {
+  online: '🟢 온라인', idle: '🌙 자리 비움', dnd: '⛔ 방해 금지', invisible: '⚫ 오프라인으로 표시', offline: '⚫ 오프라인',
+};
+
+export function avatar(user, size = 40, { online, presence } = {}) {
+  const pres = presence || (online === undefined ? undefined : online ? 'online' : 'offline');
   const url = safeImageUrl(user?.avatar);
   const name = user?.nickname || '?';
   const inner = url
@@ -11,7 +16,7 @@ export function avatar(user, size = 40, { online } = {}) {
     : h('span', { class: 'avatar-initial', style: { background: colorFor(user?.id || name) } }, [...name][0]?.toUpperCase() || '?');
   return h('span', { class: 'avatar', style: { width: `${size}px`, height: `${size}px`, fontSize: `${Math.round(size * 0.42)}px` } },
     inner,
-    online !== undefined ? h('span', { class: `presence ${online ? 'on' : 'off'}`, title: online ? '온라인' : '오프라인' }) : null);
+    pres ? h('span', { class: `presence p-${pres}${pres === 'online' ? ' on' : pres === 'offline' || pres === 'invisible' ? ' off' : ''}`, title: PRESENCE_LABEL[pres] || '' }) : null);
 }
 
 export function badge(provider, { full = false } = {}) {

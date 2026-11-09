@@ -1,8 +1,11 @@
-import { h, toast } from '../util.js';
+import { h, toast, isTouch } from '../util.js';
 import { icon } from './icons.js';
-import { avatar, badge } from './common.js';
-import { profileDialog, editNodeDialog } from './dialogs.js';
+import { avatar, badge, openMenu, openModal, field } from './common.js';
+import {
+  profileDialog, editNodeDialog, settings, settingsChanged,
+} from './dialogs.js';
 import { errorText } from './errors.js';
+import { sounds } from '../sounds.js';
 
 export function createCallView(ctx) {
   const { data, calls } = ctx;
@@ -17,7 +20,75 @@ export function createCallView(ctx) {
       h('button', { class: 'icon-btn', title: '멤버', 'aria-label': '멤버 목록', onclick: () => ctx.togglePanel('members') }, icon('users'))));
   const stage = h('div', { class: 'call-stage' });
   const controls = h('div', { class: 'call-controls' });
-  const el = h('section', { class: 'call-view', 'aria-label': '통화' }, header, stage, controls);
+  const timer = h('span', { class: 'call-timer', hidden: true });
+  const pttHint = h('div', { class: 'ptt-hint', hidden: true });
+  const el = h('section', { class: 'call-view', 'aria-label': '통화' }, header, stage, pttHint, controls);
+  header.querySelector('.room-actions').prepend(timer);
+
+  // 통화 시간
+  setInterval(() => {
+    if (!calls.joinedAt) { timer.hidden = true; return; }
+    const s = Math.floor((Date.now() - calls.joinedAt) / 1000);
+    timer.hidden = false;
+    timer.textContent = `⏱ ${Math.floor(s / 3600) ? `${Math.floor(s / 3600)}:` : ''}${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+  }, 1000);
+
+  // 눌러서 말하기: Space 키 (입력창 밖에서)
+  calls.setPtt(settings.ptt);
+  settingsChanged.add((patch) => { if ('ptt' in patch) { calls.setPtt(patch.ptt); render(); } });
+  const typingTarget = (e) => e.target.closest?.('input, textarea, select, [contenteditable]');
+  window.addEventListener('keydown', (e) => { if (e.code === 'Space' && calls.active && calls.ptt && !typingTarget(e)) { e.preventDefault(); calls.setTalking(true); } });
+  window.addEventListener('keyup', (e) => { if (e.code === 'Space' && calls.ptt) calls.setTalking(false); });
+  window.addEventListener('blur', () => calls.setTalking(false));
+  calls.on('ptt', (down) => { pttHint.classList.toggle('live', down); pttHint.textContent = down ? '🎙️ 말하는 중…' : isTouch() ? '아래 버튼을 누르고 있는 동안 말할 수 있어요' : 'Space 키를 누르고 있는 동안 말할 수 있어요'; });
+
+  // 입장 · 퇴장 효과음
+  let prevSids = new Set();
+  data.on('calls', (roomId) => {
+    if (!calls.active || (roomId && roomId !== calls.roomId)) return;
+    const now = new Set((data.calls[calls.roomId] || []).map((p) => p.sid));
+    if (settings.callSounds && prevSids.size) {
+      if ([...now].some((sid) => !prevSids.has(sid) && sid !== calls.sid)) sounds.join();
+      else if ([...prevSids].some((sid) => !now.has(sid) && sid !== calls.sid)) sounds.leave();
+    }
+    prevSids = now;
+  });
+  calls.on('update', () => { if (!calls.active) prevSids = new Set(); });
+
+  function volumeMenu(p, anchor) {
+    const u = data.user(p.userId) || { nickname: '…' };
+    const v = Math.round((calls.volumes.get(p.userId) ?? 1) * 100);
+    const label = h('span', {}, `${v}%`);
+    const range = h('input', {
+      type: 'range', min: '0', max: '100', value: String(v), class: 'vol-range', 'aria-label': `${u.nickname} 볼륨`,
+      oninput: (e) => { calls.setVolume(p.userId, Number(e.target.value) / 100); label.textContent = `${e.target.value}%`; },
+    });
+    openMenu(anchor, [
+      { label: '프로필 보기', icon: 'user', onClick: () => profileDialog(ctx, p.userId) },
+      { label: '음소거 (나에게만)', icon: 'micOff', onClick: () => calls.setVolume(p.userId, 0) },
+      { label: '볼륨 초기화', icon: 'refresh', onClick: () => calls.setVolume(p.userId, 1) },
+    ], { header: h('div', { class: 'vol-box' }, h('div', { class: 'row gap' }, icon('speaker', 16), h('strong', {}, `${u.nickname} 볼륨`), label), range) });
+  }
+
+  async function deviceDialog() {
+    const d = await calls.devices();
+    const sel = (list, cur, label, onPick) => h('select', { class: 'input', onchange: (e) => onPick(e.target.value).catch?.(() => toast('장치를 바꾸지 못했습니다.', 'error')) },
+      h('option', { value: '' }, '기본 장치'),
+      list.map((x, i) => h('option', { value: x.deviceId, selected: x.deviceId === cur }, x.label || `${label} ${i + 1}`)));
+    openModal({
+      title: '🎧 통화 장치',
+      body: [
+        field('마이크', sel(d.mics, calls.micId, '마이크', (id) => calls.setMic(id))),
+        d.speakers.length && 'setSinkId' in HTMLMediaElement.prototype
+          ? field('스피커', sel(d.speakers, calls.sinkId, '스피커', (id) => calls.setSpeaker(id)))
+          : h('p', { class: 'muted small' }, '이 브라우저에서는 스피커를 고를 수 없습니다.'),
+        field('카메라', sel(d.cams, calls.camId, '카메라', (id) => calls.setCamera(id))),
+        h('label', { class: 'switch-row' }, h('span', {}, '눌러서 말하기 (Space)'),
+          h('input', { type: 'checkbox', class: 'switch', checked: settings.ptt, onchange: (e) => { settings.ptt = e.target.checked; try { localStorage.setItem('cs.settings', JSON.stringify(settings)); } catch { /* noop */ } settingsChanged.forEach((fn) => fn({ ptt: e.target.checked })); } })),
+      ],
+      actions: [{ label: '닫기' }],
+    });
+  }
 
   function videoFor(sid, stream, mirror) {
     let v = videos.get(sid);
@@ -47,7 +118,12 @@ export function createCallView(ctx) {
         p.state?.deaf ? icon('headphonesOff', 14) : null,
         p.state?.screen ? icon('screen', 14) : null,
         connecting ? h('span', { class: 'muted small' }, ' 연결 중…') : null),
-      h('button', { class: 'tile-hit', 'aria-label': `${u.nickname} 프로필`, onclick: () => profileDialog(ctx, p.userId) }));
+      h('button', {
+        class: 'tile-hit', 'aria-label': `${u.nickname} 메뉴`,
+        onclick: (e) => (isMe ? profileDialog(ctx, p.userId) : volumeMenu(p, e)),
+        oncontextmenu: (e) => { e.preventDefault(); if (!isMe) volumeMenu(p, e); },
+      }),
+      !isMe && (calls.volumes.get(p.userId) ?? 1) !== 1 ? h('span', { class: 'tile-vol' }, `🔉 ${Math.round((calls.volumes.get(p.userId) ?? 1) * 100)}%`) : null);
   }
 
   function render() {
@@ -83,6 +159,7 @@ export function createCallView(ctx) {
         reason ? h('p', { class: 'notice warn' }, icon('lock', 14), ' ', reason) : null,
         h('p', { class: 'muted small' }, '음성 · 영상 · 화면 공유를 지원합니다. 참여 시 마이크 권한을 요청합니다.')));
       controls.hidden = true;
+      pttHint.hidden = true;
       return;
     }
 
@@ -92,13 +169,21 @@ export function createCallView(ctx) {
     controls.hidden = false;
     const s = calls.state;
     const btn = (ic, label, on, fn, cls = '') => h('button', { class: `call-btn${on ? ' on' : ''} ${cls}`, title: label, 'aria-label': label, 'aria-pressed': String(!!on), onclick: fn }, icon(ic, 22));
-    controls.replaceChildren(
+    controls.replaceChildren(...[
       btn(s.muted ? 'micOff' : 'mic', s.muted ? '음소거 해제' : '음소거', s.muted, () => calls.toggleMute(), s.muted ? 'warn' : ''),
       btn(s.deaf ? 'headphonesOff' : 'headphones', s.deaf ? '소리 켜기' : '소리 끄기', s.deaf, () => calls.toggleDeaf(), s.deaf ? 'warn' : ''),
       btn(s.video && !s.screen ? 'video' : 'videoOff', s.video && !s.screen ? '카메라 끄기' : '카메라 켜기', s.video && !s.screen, () => calls.toggleCamera()),
       calls.canScreenShare ? btn('screen', s.screen ? '화면 공유 중지' : '화면 공유', s.screen, () => calls.toggleScreen()) : null,
+      btn('gear', '통화 장치 · 설정', false, () => deviceDialog()),
+      calls.ptt && isTouch() ? h('button', {
+        class: 'call-btn ptt-btn', 'aria-label': '누르고 말하기',
+        onpointerdown: (e) => { e.preventDefault(); calls.setTalking(true); },
+        onpointerup: () => calls.setTalking(false), onpointerleave: () => calls.setTalking(false), onpointercancel: () => calls.setTalking(false),
+      }, icon('mic', 22)) : null,
       btn('phoneOff', '통화 나가기', false, () => calls.leave(), 'danger'),
-    );
+    ].filter(Boolean));
+    pttHint.hidden = !calls.ptt;
+    if (calls.ptt && !calls.pttDown) pttHint.textContent = isTouch() ? '아래 버튼을 누르고 있는 동안 말할 수 있어요' : 'Space 키를 누르고 있는 동안 말할 수 있어요';
   }
 
   calls.on('update', render);

@@ -14,6 +14,10 @@ const MESSAGES = {
   empty: '내용이 비어 있습니다.',
   missing_file: '기기에서 파일을 찾을 수 없습니다.',
   auth_needed: '다시 로그인해 주세요.',
+  readonly: '공지 전용 채팅방입니다. 로그인한 사용자만 글을 쓸 수 있어요.',
+  slowmode: '슬로우 모드입니다. 잠시 후 다시 보내 주세요.',
+  invalid_poll: '투표에는 질문과 선택지 2개 이상이 필요합니다.',
+  invalid_option: '없는 선택지입니다.',
 };
 
 export const errorText = (e) => MESSAGES[e?.code] || MESSAGES[e?.message] || e?.message || '오류가 발생했습니다.';
