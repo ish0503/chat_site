@@ -102,6 +102,8 @@ npm start                  # http://localhost:8080
    - `APPLE_CLIENT_ID` — Apple Services ID
    - (선택) `APP_NAME`, `APPLE_REDIRECT_URI`, `FILE_TTL_HOURS`, `MAX_UPLOAD_MB`
 3. `main` 브랜치에 push 하면 `.github/workflows/deploy-pages.yml` 이 `client/` 를 배포합니다. (Actions 탭에서 수동 실행도 가능)
+   - 앱 주소: `https://ish0503.github.io/chat_site/`
+   - Source 를 **Deploy from a branch** (`main` / root) 로 두어도 동작합니다. 루트의 `index.html` 이 `client/` 로 이동시키며, 이때 앱 주소는 `https://ish0503.github.io/chat_site/client/` 가 됩니다. 단, 이 방식에서는 저장소 Variables 가 적용되지 않으므로 `client/env.js` 를 직접 수정해야 합니다.
 
 변수를 쓰지 않고 `client/env.js` 를 직접 수정해도 됩니다.
 
