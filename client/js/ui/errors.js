@@ -1,0 +1,19 @@
+const MESSAGES = {
+  forbidden: '권한이 없습니다. (게스트는 채팅만 할 수 있습니다)',
+  invalid_move: '폴더를 자기 자신이나 하위 폴더로 옮길 수 없습니다.',
+  invalid_parent: '대상 폴더를 찾을 수 없습니다.',
+  invalid_name: '이름을 입력해 주세요.',
+  room_not_found: '채팅방을 찾을 수 없습니다.',
+  not_found: '대상을 찾을 수 없습니다.',
+  file_too_large: '파일이 너무 큽니다.',
+  expired: '유효기간이 지나 더 이상 내려받을 수 없습니다.',
+  offline: '서버에 연결되어 있지 않습니다.',
+  timeout: '서버 응답이 없습니다.',
+  db_unavailable: '데이터베이스에 연결할 수 없습니다.',
+  rate_limited: '요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.',
+  empty: '내용이 비어 있습니다.',
+  missing_file: '기기에서 파일을 찾을 수 없습니다.',
+  auth_needed: '다시 로그인해 주세요.',
+};
+
+export const errorText = (e) => MESSAGES[e?.code] || MESSAGES[e?.message] || e?.message || '오류가 발생했습니다.';

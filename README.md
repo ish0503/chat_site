@@ -1,1 +1,126 @@
-# chat_site
+# Chat Site
+
+디스코드 스타일의 채팅 앱입니다. 프런트엔드는 **GitHub Pages**(정적 호스팅)에, 실시간 서버는 **Node.js + Socket.IO + MongoDB**로 따로 배포합니다.
+서버나 MongoDB에 연결할 수 없으면 **자동으로 이 기기(IndexedDB)에 저장**하고, 다시 연결되면 서버로 동기화합니다.
+
+## 주요 기능
+
+| 구분 | 내용 |
+| --- | --- |
+| 로그인 | Google, Apple, 게스트. 메시지와 프로필에 로그인 방식 배지(Google / Apple / 게스트)가 표시됩니다. |
+| 프로필 | 프로필 사진, 닉네임 (편집 가능), 로그인 방식, 접속 상태, 가입일 |
+| 방 구조 | 채팅방 · 통화방 · 폴더. 폴더 안에 폴더를 무한히 넣을 수 있고, 드래그(데스크톱) 또는 “이동” 메뉴(모바일)로 정리 |
+| 메시지 | 이름이 위, 그 아래 프로필 사진, 사진 옆에 내용이 오는 디스코드식 배치. 같은 사람이 이어서 보낸 메시지는 묶어서 표시 |
+| 첨부 | 이미지 · 동영상 · 오디오 · 모든 파일 (드래그 앤 드롭, 붙여넣기, 최대 10개) |
+| 파일 유효기간 | 업로드 후 일정 기간(기본 72시간)만 내려받을 수 있습니다. 기간이 지나면 서버에서 삭제되고, **기기에 저장된 사본이 있으면 보여주지만 다시 내려받을 수는 없습니다.** |
+| 고정 | 메시지 고정 → 채팅방 상단 📌 버튼으로 고정된 메시지를 모아 보고 원래 위치로 이동 |
+| 그 외 | 답장, 수정, 삭제, 이모지 반응, @멘션(자동완성·강조·알림), 마크다운(`**굵게**` `*기울임*` `__밑줄__` `~~취소선~~` `\|\|스포일러\|\|` `` `코드` `` 코드블록, 인용), 검색, 입력 중 표시, 읽지 않은 메시지 배지, 날짜 구분선, 이전 메시지 무한 스크롤, 멤버 목록·접속 상태, 브라우저 알림, 다크/라이트 테마, 빠른 이동(Ctrl/⌘+K), PWA(홈 화면에 추가) |
+| 통화방 | WebRTC 음성 · 영상 · 화면 공유, 음소거 · 소리 끄기, 말하는 사람 표시, 사이드바에 통화 참여자 표시 |
+| 모바일 | 슬라이드 사이드바(스와이프), 길게 눌러 메시지 메뉴(바텀시트), 안전 영역(노치) 대응, 16px 입력창(확대 방지) |
+
+### 권한
+
+| 동작 | Google / Apple | 게스트 |
+| --- | :---: | :---: |
+| 채팅방에서 메시지·파일 보내기, 자기 메시지 수정·삭제 | ✅ | ✅ |
+| 채팅방 · 통화방 · 폴더 만들기 / 이름 변경 / 이동 / 삭제 | ✅ | ❌ |
+| 메시지 고정, 반응, 다른 사람 메시지 삭제 | ✅ | ❌ |
+| 통화 참여 | ✅ | ❌ |
+
+권한은 `client/js/permissions.js` 와 `server/src/permissions.js` 에서 바꿀 수 있습니다 (두 파일을 같게 유지하세요). 서버도 같은 규칙으로 검사합니다.
+
+## 구조
+
+```
+client/                 GitHub Pages 에 배포되는 정적 앱 (빌드 과정 없음)
+  env.js                배포 설정 (서버 주소, Google/Apple 클라이언트 ID 등)
+  js/data.js            데이터 계층: 서버 ↔ 기기 저장소 전환, outbox 동기화
+  js/db.js              IndexedDB 저장소
+  js/call.js            WebRTC 통화
+  js/ui/*.js            화면 구성 요소
+server/                 Socket.IO + MongoDB 서버 (Koyeb 에 Dockerfile 로 배포)
+.github/workflows/      GitHub Pages 자동 배포
+```
+
+### 저장 방식 (MongoDB 장애 대비)
+
+1. 모든 데이터는 기기의 IndexedDB 에도 저장됩니다. 서버에 연결되어 있으면 서버(MongoDB)가 기준입니다.
+2. 서버 주소가 없거나, 서버가 꺼져 있거나, **서버는 살아 있지만 MongoDB 연결이 끊긴 경우** 모두 자동으로 “기기에 저장” 모드로 바뀝니다. 화면 위쪽에 상태 배너가 표시됩니다.
+3. 그동안 한 작업(메시지, 파일, 방 만들기 등)은 outbox 에 순서대로 쌓이고, 다시 연결되면 자동으로 서버에 보내집니다.
+4. 서버 주소를 비워 두면 서버 없이 **로컬 모드**로 동작합니다 (한 기기에서만, 탭 사이 동기화 지원).
+
+## 빠른 시작 (내 컴퓨터)
+
+```bash
+# 1) 클라이언트만 (로컬 모드)
+cd client && python3 -m http.server 5173
+# http://localhost:5173 접속 → 게스트로 입장
+
+# 2) 서버까지
+cd server
+cp .env.example .env      # MONGODB_URI, JWT_SECRET 등 입력
+npm install
+npm start                  # http://localhost:8080
+# 앱의 설정(⚙) → 서버 주소에 http://localhost:8080 입력
+```
+
+## 배포
+
+### 1. MongoDB Atlas
+1. [MongoDB Atlas](https://www.mongodb.com/atlas)에서 무료 클러스터를 만듭니다.
+2. Database Access 에서 사용자를 만들고, Network Access 에 서버 IP(또는 `0.0.0.0/0`)를 허용합니다.
+3. Connect → Drivers 의 연결 문자열을 `MONGODB_URI` 로 사용합니다.
+
+### 2. 서버 (Koyeb)
+1. [Koyeb](https://app.koyeb.com) 에서 **Create Service → GitHub** 를 선택하고 `ish0503/chat_site` 저장소, `main` 브랜치를 고릅니다.
+2. **Builder** 는 **Dockerfile** 을 선택하고, **Work directory** 를 `server` 로 지정합니다 (`server/Dockerfile` 사용).
+3. **Exposed ports**: `8000` / HTTP, 경로 `/`. **Health checks**: HTTP, 포트 `8000`, 경로 `/api/health`.
+4. **Environment variables** 에 다음을 넣습니다. 비밀 값(`MONGODB_URI`, `JWT_SECRET`)은 *Secret* 으로 만들어 연결하세요.
+
+   | 이름 | 값 |
+   | --- | --- |
+   | `MONGODB_URI` | Atlas 연결 문자열 (Secret) |
+   | `JWT_SECRET` | 길고 무작위인 문자열, 예: `openssl rand -hex 32` (Secret) |
+   | `MONGODB_DB` | `chat_site` |
+   | `ALLOWED_ORIGINS` | `https://ish0503.github.io` |
+   | `GOOGLE_CLIENT_ID` | Google OAuth 클라이언트 ID |
+   | `APPLE_CLIENT_ID` | Apple Services ID |
+   | `FILE_TTL_HOURS` | `72` |
+   | `MAX_UPLOAD_MB` | `25` |
+
+5. **Instance** 는 무료(Free) 또는 원하는 크기를 고르고 배포합니다. 인스턴스는 **1개**로 두세요 (통화 시그널링·접속 상태를 메모리에 두기 때문에 여러 개로 늘리면 서로 연결되지 않습니다).
+6. 배포된 주소(예: `https://chat-site-xxxx.koyeb.app`)를 GitHub 변수 `SERVER_URL` 에 넣습니다. Koyeb 주소는 HTTPS 이고 WebSocket 을 지원합니다.
+7. MongoDB Atlas 의 Network Access 에는 `0.0.0.0/0` 을 허용해야 합니다 (Koyeb 의 나가는 IP 가 고정되지 않음).
+
+> Koyeb 무료 인스턴스는 일정 시간 요청이 없으면 잠들 수 있습니다. 그동안 앱은 자동으로 “기기에 저장” 모드로 동작하고, 서버가 깨어나면 동기화됩니다.
+
+### 3. GitHub Pages (클라이언트)
+1. 저장소 **Settings → Pages → Build and deployment → Source** 를 **GitHub Actions** 로 바꿉니다.
+2. **Settings → Secrets and variables → Actions → Variables** 에 다음 값을 추가합니다 (공개되는 값만):
+   - `SERVER_URL` — 서버 주소
+   - `GOOGLE_CLIENT_ID` — Google OAuth 클라이언트 ID
+   - `APPLE_CLIENT_ID` — Apple Services ID
+   - (선택) `APP_NAME`, `APPLE_REDIRECT_URI`, `FILE_TTL_HOURS`, `MAX_UPLOAD_MB`
+3. `main` 브랜치에 push 하면 `.github/workflows/deploy-pages.yml` 이 `client/` 를 배포합니다. (Actions 탭에서 수동 실행도 가능)
+   - 앱 주소: `https://ish0503.github.io/chat_site/`
+   - Source 를 **Deploy from a branch** (`main` / root) 로 두어도 동작합니다. 루트의 `index.html` 이 `client/` 로 이동시키며, 이때 앱 주소는 `https://ish0503.github.io/chat_site/client/` 가 됩니다. 단, 이 방식에서는 저장소 Variables 가 적용되지 않으므로 `client/env.js` 를 직접 수정해야 합니다.
+
+변수를 쓰지 않고 `client/env.js` 를 직접 수정해도 됩니다.
+
+### 4. Google 로그인
+1. [Google Cloud Console](https://console.cloud.google.com/apis/credentials) → 사용자 인증 정보 → **OAuth 클라이언트 ID**(웹 애플리케이션)를 만듭니다.
+2. **승인된 JavaScript 원본**에 `https://ish0503.github.io` (로컬 테스트 시 `http://localhost:5173`)를 추가합니다.
+3. 클라이언트 ID 를 클라이언트(`GOOGLE_CLIENT_ID` 변수)와 서버(`GOOGLE_CLIENT_ID` 환경변수) 양쪽에 넣습니다.
+
+### 5. Apple 로그인
+Apple Developer Program(유료) 계정이 필요합니다.
+1. Certificates, Identifiers & Profiles → Identifiers 에서 App ID 를 만들고 *Sign in with Apple* 을 켭니다.
+2. **Services ID** 를 만들고 *Sign in with Apple* 설정에서 도메인 `ish0503.github.io` 와 Return URL(`https://ish0503.github.io/chat_site/`)을 등록합니다.
+3. Services ID 를 클라이언트(`APPLE_CLIENT_ID`)와 서버(`APPLE_CLIENT_ID`) 양쪽에 넣습니다. 리디렉트 주소가 다르면 `APPLE_REDIRECT_URI` 로 지정하세요.
+
+서버는 Google/Apple 의 ID 토큰 서명을 공개키(JWKS)로 검증한 뒤 자체 세션 토큰(30일)을 발급합니다. 클라이언트 ID 가 없으면 해당 로그인 버튼은 비활성화되고 게스트 로그인만 가능합니다.
+
+## 참고 / 한계
+- **통화**는 서버(시그널링)에 연결되어 있을 때만 됩니다. 참가자끼리 직접 연결(mesh)하므로 4~6명 정도에 적합합니다. 회사망 등 일부 네트워크에서는 TURN 서버가 필요할 수 있습니다 (`client/env.js` 에 `ICE_SERVERS` 로 추가).
+- 브라우저에서 기기 사본을 지우면(사이트 데이터 삭제, 설정의 “파일 캐시 비우기”) 만료된 파일은 다시 볼 수 없습니다.
+- 첨부파일은 MongoDB GridFS 에 저장됩니다. Atlas 무료 등급은 512MB 이므로 `FILE_TTL_HOURS`, `MAX_UPLOAD_MB` 를 적절히 조절하세요.
