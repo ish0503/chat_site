@@ -1,16 +1,31 @@
 {
+  "id": "./",
   "name": "Chat Site",
-  "short_name": "Chat",
-  "description": "폴더로 정리하는 채팅방 · 통화방",
-  "start_url": "./",
+  "short_name": "Chat Site",
+  "description": "폴더로 정리하는 채팅방 · 통화방. 코드 실행, 투표, 파일 공유, 음성·영상 통화.",
+  "start_url": "./?source=app",
   "scope": "./",
   "display": "standalone",
+  "orientation": "any",
   "background_color": "#1e1f22",
   "theme_color": "#1e1f22",
   "lang": "ko",
+  "dir": "ltr",
+  "categories": ["social", "communication", "productivity"],
   "icons": [
-    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
-    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
-    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ],
+  "shortcuts": [
+    { "name": "받은 멘션", "short_name": "멘션", "description": "나를 부른 메시지 모아 보기", "url": "./#/mentions", "icons": [{ "src": "icons/sc-mentions.png", "sizes": "96x96", "type": "image/png" }] },
+    { "name": "메시지 검색", "short_name": "검색", "description": "모든 채팅방에서 검색", "url": "./#/search", "icons": [{ "src": "icons/sc-search.png", "sizes": "96x96", "type": "image/png" }] },
+    { "name": "저장한 메시지", "short_name": "저장함", "description": "북마크한 메시지", "url": "./#/bookmarks", "icons": [{ "src": "icons/sc-bookmarks.png", "sizes": "96x96", "type": "image/png" }] }
+  ],
+  "screenshots": [
+    { "src": "screenshots/wide.png", "sizes": "1280x800", "type": "image/png", "form_factor": "wide", "label": "채팅방과 코드 실행, 투표" },
+    { "src": "screenshots/narrow.png", "sizes": "390x844", "type": "image/png", "form_factor": "narrow", "label": "모바일 채팅" }
   ]
 }

@@ -3,6 +3,7 @@ import { h, toast } from '../util.js';
 import { renderGoogleButton, signInWithApple, guestSession } from '../auth.js';
 import { icon } from './icons.js';
 import { openServerSettings } from './dialogs.js';
+import { openInstall, installable } from '../install.js';
 
 /** 로그인 화면. onSession(session) 으로 결과를 돌려줍니다. */
 export function renderLogin(root, onSession, { reason } = {}) {
@@ -51,7 +52,9 @@ export function renderLogin(root, onSession, { reason } = {}) {
       h('div', { class: 'divider' }, h('span', {}, '또는')),
       guestForm,
       h('p', { class: 'field-hint' }, '게스트는 채팅방에서 채팅만 할 수 있습니다. 방 만들기·삭제, 고정, 반응, 통화는 Google/Apple 로그인 사용자만 가능합니다.'),
-      h('button', { class: 'link-btn', type: 'button', onclick: () => openServerSettings() }, icon('gear', 14), ' 서버 설정')));
+      h('div', { class: 'login-links' },
+        installable() ? h('button', { class: 'link-btn', type: 'button', onclick: () => openInstall() }, icon('download', 14), ' 앱으로 설치') : null,
+        h('button', { class: 'link-btn', type: 'button', onclick: () => openServerSettings() }, icon('gear', 14), ' 서버 설정'))));
 
   root.replaceChildren(screen);
 

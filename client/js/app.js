@@ -14,6 +14,7 @@ import {
 } from './ui/dialogs.js';
 import { roomNotify, blocked, reminders } from './local.js';
 import { sounds } from './sounds.js';
+import { installBanner } from './install.js';
 import { openModal, confirmDialog, emptyState, closeMenu } from './ui/common.js';
 import { icon } from './ui/icons.js';
 
@@ -22,7 +23,7 @@ document.title = config.appName;
 applyTheme();
 matchMedia('(prefers-color-scheme: light)').addEventListener?.('change', applyTheme);
 
-if ('serviceWorker' in navigator && location.protocol === 'https:') {
+if ('serviceWorker' in navigator && window.isSecureContext) {
   navigator.serviceWorker.register('./sw.js').catch(() => {});
 }
 
@@ -68,6 +69,7 @@ function start(session) {
   const content = h('div', { class: 'main-content' });
   const scrim = h('div', { class: 'drawer-scrim', onclick: () => closeDrawer() });
   const main = h('main', { class: 'main' }, banner, content);
+  installBanner(main);
   const layout = h('div', { class: 'layout' }, sidebar.el, scrim, main, panels.el);
   root.replaceChildren(layout);
 
@@ -295,8 +297,15 @@ function start(session) {
 
   // ───────── 라우팅 ─────────
   const routeId = () => location.hash.match(/^#\/room\/([\w-]+)/)?.[1];
+  // 앱 아이콘을 길게 눌러 나오는 바로가기: #/mentions, #/search, #/bookmarks
+  const routePanel = () => location.hash.match(/^#\/(mentions|search|bookmarks)$/)?.[1];
+  const openShortcut = (k) => {
+    if (k === 'search') { panels.search('', true); layout.classList.add('panel-open'); } else if (panels.kind !== k) ctx.togglePanel(k);
+  };
+  const launchPanel = routePanel();
   const routeMsg = () => location.hash.match(/^#\/room\/[\w-]+\/m\/([\w-]+)/)?.[1];
   const onHash = () => {
+    if (routePanel()) { openShortcut(routePanel()); return; }
     const id = routeId();
     const mid = routeMsg();
     if (id && data.nodes.has(id) && mid) ctx.jumpTo(id, mid);
@@ -321,6 +330,7 @@ function start(session) {
         const mid = routeMsg();
         if (mid && target === routeId()) ctx.jumpTo(target, mid);
         else ctx.openRoom(target, { replace: true });
+        if (launchPanel) openShortcut(launchPanel);
       } else if (!initialized) showEmpty();
     }
   });
