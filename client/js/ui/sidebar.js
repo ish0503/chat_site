@@ -7,6 +7,7 @@ import {
 } from './dialogs.js';
 import { favorites, roomNotify, personal } from '../local.js';
 import { errorText } from './errors.js';
+import { install, installable, openInstall } from '../install.js';
 
 const COLLAPSED_KEY = 'cs.collapsed';
 const collapsed = new Set((() => { try { return JSON.parse(localStorage.getItem(COLLAPSED_KEY)) || []; } catch { return []; } })());
@@ -25,6 +26,10 @@ export function createSidebar(ctx) {
       if (e.key === 'Escape') { filter.value = ''; filterText = ''; render(); }
     },
   });
+  const installBtn = h('button', {
+    class: 'icon-btn install-btn', title: '앱으로 설치 (홈 화면 · 바탕화면)', 'aria-label': '앱으로 설치', hidden: !installable(), onclick: () => openInstall(),
+  }, icon('download'));
+  install.on('change', () => { installBtn.hidden = !installable(); });
   const headMenuBtn = h('button', {
     class: 'icon-btn', title: '목록 메뉴', 'aria-label': '목록 메뉴',
     onclick: (e) => openMenu(e.currentTarget, [
@@ -36,7 +41,7 @@ export function createSidebar(ctx) {
   const voiceBar = h('div', { class: 'voice-bar', hidden: true });
   const userPanel = h('div', { class: 'user-panel' });
   const el = h('aside', { class: 'sidebar', 'aria-label': '사이드바' },
-    h('header', { class: 'side-head' }, h('h1', { class: 'ellipsis' }, config.appName), headMenuBtn, addBtn),
+    h('header', { class: 'side-head' }, h('h1', { class: 'ellipsis' }, config.appName), installBtn, headMenuBtn, addBtn),
     h('div', { class: 'tree-filter-wrap' }, filter),
     tree, voiceBar, userPanel);
 

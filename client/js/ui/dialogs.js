@@ -16,6 +16,7 @@ import {
 import { icon } from './icons.js';
 import { errorText } from './errors.js';
 import { enhance } from './codeblock.js';
+import { openInstall, isStandalone } from '../install.js';
 
 const TYPE_LABEL = { text: '채팅방', voice: '통화방', folder: '폴더' };
 export const COLORS = ['#5865f2', '#3ba55c', '#faa61a', '#ed4245', '#eb459e', '#9b59b6', '#1abc9c', '#e67e22', '#80848e'];
@@ -566,8 +567,6 @@ export function openServerSettings() {
   openModal({ title: '서버 설정', body: serverSection(() => {}), actions: [{ label: '닫기' }] });
 }
 
-let installPrompt = null;
-window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installPrompt = e; });
 
 export function settingsDialog(ctx) {
   const { data } = ctx;
@@ -670,13 +669,9 @@ export function settingsDialog(ctx) {
         h('div', { class: 'row gap' },
           h('button', { class: 'btn secondary', type: 'button', onclick: () => shortcutsDialog() }, '⌨️ 단축키'),
           h('button', { class: 'btn secondary', type: 'button', onclick: () => commandsDialog() }, '/ 명령어'),
-          h('button', {
-            class: 'btn secondary', type: 'button',
-            onclick: async () => {
-              if (installPrompt) { installPrompt.prompt(); installPrompt = null; return; }
-              toast(/iPhone|iPad/.test(navigator.userAgent) ? '사파리의 공유 버튼 → "홈 화면에 추가"를 누르세요.' : '이미 설치되었거나 이 브라우저는 앱 설치를 지원하지 않습니다. 브라우저 메뉴의 "앱 설치"를 확인하세요.', 'info', 5000);
-            },
-          }, '📲 앱으로 설치')),
+          isStandalone()
+            ? h('span', { class: 'muted small' }, '✅ 앱으로 실행 중')
+            : h('button', { class: 'btn primary', type: 'button', onclick: () => openInstall() }, '📲 앱으로 설치 (홈 화면 · 바탕화면)')),
         h('button', { class: 'btn danger', type: 'button', onclick: () => ctx.logout() }, icon('logout', 16), ' 로그아웃')),
     ],
     actions: [{ label: '닫기' }],

@@ -402,7 +402,7 @@ mark { background: rgba(240, 178, 50, 0.45); color: inherit; border-radius: 2px;
   flex: 1; min-height: 40px; max-height: 240px; resize: none; border: 0; outline: none; background: transparent;
   padding: 10px 6px; line-height: 1.375; color: var(--text-strong); font-size: 15px;
 }
-.composer-input::placeholder { color: var(--dim); }
+.composer-input::placeholder { color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .composer-box .icon-btn { width: 40px; height: 40px; }
 .send-btn { color: var(--accent) !important; }
 .char-count { position: absolute; right: 22px; bottom: 54px; font-size: 11px; color: var(--muted); background: var(--bg-3); padding: 0 4px; border-radius: 4px; }
@@ -829,3 +829,17 @@ kbd { font-family: var(--mono); font-size: 12px; background: var(--bg-3); border
 .tile-vol { position: absolute; right: 8px; top: 8px; background: rgba(0, 0, 0, 0.6); color: #fff; padding: 2px 6px; border-radius: 6px; font-size: 12px; }
 .vol-box { padding: 6px 8px 10px; display: flex; flex-direction: column; gap: 8px; border-bottom: 1px solid var(--border); margin-bottom: 4px; }
 .vol-range { width: 100%; accent-color: var(--accent); }
+
+/* 앱 설치 */
+.login-links { display: flex; justify-content: center; gap: 16px; flex-wrap: wrap; }
+.install-banner { display: flex; align-items: center; gap: 10px; padding: 8px 10px 8px 12px; background: var(--bg-1); border-bottom: 1px solid var(--border); }
+.install-banner img { border-radius: 9px; }
+.install-banner .grow { display: flex; flex-direction: column; }
+.install-modal .modal-body { display: flex; flex-direction: column; gap: 12px; }
+.install-hero { display: flex; gap: 12px; align-items: center; background: var(--bg-1); padding: 12px; border-radius: 10px; }
+.install-hero img { border-radius: 14px; flex: none; }
+.install-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.install-step { display: flex; gap: 10px; align-items: flex-start; line-height: 1.6; }
+.step-no { width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: #fff; font-size: 13px; font-weight: 700; display: grid; place-items: center; flex: none; margin-top: 1px; }
+.ui-key { display: inline-block; padding: 0 6px; border-radius: 5px; background: var(--bg-3); border: 1px solid var(--border); font-weight: 600; white-space: nowrap; }
+.install-modal .btn.primary { align-self: flex-start; }
