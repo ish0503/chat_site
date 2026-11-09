@@ -38,9 +38,8 @@ client/                 GitHub Pages 에 배포되는 정적 앱 (빌드 과정 
   js/db.js              IndexedDB 저장소
   js/call.js            WebRTC 통화
   js/ui/*.js            화면 구성 요소
-server/                 Socket.IO + MongoDB 서버 (Render, Railway, Fly.io 등에 배포)
+server/                 Socket.IO + MongoDB 서버 (Koyeb 에 Dockerfile 로 배포)
 .github/workflows/      GitHub Pages 자동 배포
-render.yaml             Render 원클릭 배포 설정
 ```
 
 ### 저장 방식 (MongoDB 장애 대비)
@@ -72,12 +71,28 @@ npm start                  # http://localhost:8080
 2. Database Access 에서 사용자를 만들고, Network Access 에 서버 IP(또는 `0.0.0.0/0`)를 허용합니다.
 3. Connect → Drivers 의 연결 문자열을 `MONGODB_URI` 로 사용합니다.
 
-### 2. 서버 (예: Render)
-1. Render 에서 **New → Blueprint** 로 이 저장소를 연결하면 `render.yaml` 대로 `server/` 가 배포됩니다.
-2. 환경변수 `MONGODB_URI`, `GOOGLE_CLIENT_ID`, `APPLE_CLIENT_ID` 를 입력합니다. `ALLOWED_ORIGINS` 에는 GitHub Pages 주소(`https://ish0503.github.io`)를 넣습니다.
-3. 배포된 주소(예: `https://chat-site-server.onrender.com`)를 기억해 둡니다. GitHub Pages 는 HTTPS 이므로 서버도 반드시 HTTPS 여야 합니다.
+### 2. 서버 (Koyeb)
+1. [Koyeb](https://app.koyeb.com) 에서 **Create Service → GitHub** 를 선택하고 `ish0503/chat_site` 저장소, `main` 브랜치를 고릅니다.
+2. **Builder** 는 **Dockerfile** 을 선택하고, **Work directory** 를 `server` 로 지정합니다 (`server/Dockerfile` 사용).
+3. **Exposed ports**: `8000` / HTTP, 경로 `/`. **Health checks**: HTTP, 포트 `8000`, 경로 `/api/health`.
+4. **Environment variables** 에 다음을 넣습니다. 비밀 값(`MONGODB_URI`, `JWT_SECRET`)은 *Secret* 으로 만들어 연결하세요.
 
-Docker 로 배포하려면 `server/Dockerfile` 을 사용하세요.
+   | 이름 | 값 |
+   | --- | --- |
+   | `MONGODB_URI` | Atlas 연결 문자열 (Secret) |
+   | `JWT_SECRET` | 길고 무작위인 문자열, 예: `openssl rand -hex 32` (Secret) |
+   | `MONGODB_DB` | `chat_site` |
+   | `ALLOWED_ORIGINS` | `https://ish0503.github.io` |
+   | `GOOGLE_CLIENT_ID` | Google OAuth 클라이언트 ID |
+   | `APPLE_CLIENT_ID` | Apple Services ID |
+   | `FILE_TTL_HOURS` | `72` |
+   | `MAX_UPLOAD_MB` | `25` |
+
+5. **Instance** 는 무료(Free) 또는 원하는 크기를 고르고 배포합니다. 인스턴스는 **1개**로 두세요 (통화 시그널링·접속 상태를 메모리에 두기 때문에 여러 개로 늘리면 서로 연결되지 않습니다).
+6. 배포된 주소(예: `https://chat-site-xxxx.koyeb.app`)를 GitHub 변수 `SERVER_URL` 에 넣습니다. Koyeb 주소는 HTTPS 이고 WebSocket 을 지원합니다.
+7. MongoDB Atlas 의 Network Access 에는 `0.0.0.0/0` 을 허용해야 합니다 (Koyeb 의 나가는 IP 가 고정되지 않음).
+
+> Koyeb 무료 인스턴스는 일정 시간 요청이 없으면 잠들 수 있습니다. 그동안 앱은 자동으로 “기기에 저장” 모드로 동작하고, 서버가 깨어나면 동기화됩니다.
 
 ### 3. GitHub Pages (클라이언트)
 1. 저장소 **Settings → Pages → Build and deployment → Source** 를 **GitHub Actions** 로 바꿉니다.
