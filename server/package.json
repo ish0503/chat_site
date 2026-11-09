@@ -1,0 +1,23 @@
+{
+  "name": "chat-site-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Realtime backend (Socket.IO + MongoDB) for chat_site",
+  "type": "module",
+  "main": "src/index.js",
+  "engines": {
+    "node": ">=20.12"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "jose": "^5.9.6",
+    "mongodb": "^6.12.0",
+    "multer": "^2.0.2",
+    "socket.io": "^4.8.1"
+  }
+}

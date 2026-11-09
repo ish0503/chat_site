@@ -1,0 +1,61 @@
+name: Deploy client to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    paths: ['client/**', '.github/workflows/deploy-pages.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # 저장소 Settings → Secrets and variables → Actions → Variables 에 값을 넣으면
+      # client/env.js 를 그 값으로 덮어써서 배포합니다. (값이 하나도 없으면 커밋된 env.js 그대로 사용)
+      - name: Generate env.js from repository variables
+        env:
+          APP_NAME: ${{ vars.APP_NAME }}
+          SERVER_URL: ${{ vars.SERVER_URL }}
+          GOOGLE_CLIENT_ID: ${{ vars.GOOGLE_CLIENT_ID }}
+          APPLE_CLIENT_ID: ${{ vars.APPLE_CLIENT_ID }}
+          APPLE_REDIRECT_URI: ${{ vars.APPLE_REDIRECT_URI }}
+          FILE_TTL_HOURS: ${{ vars.FILE_TTL_HOURS }}
+          MAX_UPLOAD_MB: ${{ vars.MAX_UPLOAD_MB }}
+        run: |
+          node -e '
+            const e = process.env;
+            const keys = ["APP_NAME","SERVER_URL","GOOGLE_CLIENT_ID","APPLE_CLIENT_ID","APPLE_REDIRECT_URI","FILE_TTL_HOURS","MAX_UPLOAD_MB"];
+            if (!keys.some((k) => e[k])) { console.log("No repository variables set; using committed client/env.js"); process.exit(0); }
+            const env = {
+              APP_NAME: e.APP_NAME || "Chat Site",
+              SERVER_URL: e.SERVER_URL || "",
+              GOOGLE_CLIENT_ID: e.GOOGLE_CLIENT_ID || "",
+              APPLE_CLIENT_ID: e.APPLE_CLIENT_ID || "",
+              APPLE_REDIRECT_URI: e.APPLE_REDIRECT_URI || "",
+              FILE_TTL_HOURS: Number(e.FILE_TTL_HOURS) || 72,
+              MAX_UPLOAD_MB: Number(e.MAX_UPLOAD_MB) || 25,
+            };
+            require("fs").writeFileSync("client/env.js", "window.CHAT_ENV = " + JSON.stringify(env, null, 2) + ";\n");
+            console.log("Generated client/env.js");
+          '
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: client
+      - id: deployment
+        uses: actions/deploy-pages@v4

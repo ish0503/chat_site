@@ -1,0 +1,26 @@
+# Render.com Blueprint: 저장소를 연결하면 server/ 를 웹 서비스로 배포합니다.
+services:
+  - type: web
+    name: chat-site-server
+    runtime: node
+    rootDir: server
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: MONGODB_URI
+        sync: false
+      - key: MONGODB_DB
+        value: chat_site
+      - key: JWT_SECRET
+        generateValue: true
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: APPLE_CLIENT_ID
+        sync: false
+      - key: ALLOWED_ORIGINS
+        value: https://ish0503.github.io
+      - key: FILE_TTL_HOURS
+        value: "72"
+      - key: MAX_UPLOAD_MB
+        value: "25"
