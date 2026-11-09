@@ -53,6 +53,15 @@ jobs:
             console.log("Generated client/env.js");
           '
 
+      # 배포마다 파일 주소에 버전(?v=커밋)을 붙여, 브라우저가 예전 파일과 새 파일을 섞어 쓰지 않게 함
+      # (섞이면 모듈을 불러오지 못해 무한 로딩이 됨)
+      - name: Stamp asset versions
+        run: |
+          V="${GITHUB_SHA::8}"
+          find client/js -name '*.js' -exec sed -i -E "s#(from '\.{1,2}/[^'?]+\.js)'#\1?v=${V}'#g" {} +
+          sed -i -E "s#(href=\"css/style\.css)\"#\1?v=${V}\"#; s#(src=\"env\.js)\"#\1?v=${V}\"#; s#(src=\"js/app\.js)\"#\1?v=${V}\"#" client/index.html
+          echo "stamped v=${V}"; grep -c "?v=${V}" client/index.html; grep -rho "?v=${V}" client/js | wc -l
+
       # 예전 주소(…/chat_site/client/)로 들어와도 앱으로 이동하도록 리디렉트 페이지 추가
       - name: Add redirect for old /client/ URL
         run: |

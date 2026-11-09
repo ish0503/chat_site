@@ -1,5 +1,5 @@
 // 오프라인에서도 앱 화면을 열 수 있도록 앱 파일을 캐시합니다 (네트워크 우선).
-const CACHE = 'chat-site-v5';
+const CACHE = 'chat-site-v6';
 const SHELL = [
   './', './index.html', './env.js', './css/style.css', './manifest.webmanifest', './icons/icon.svg',
   './js/app.js', './js/config.js', './js/util.js', './js/markdown.js', './js/db.js', './js/api.js', './js/auth.js',
@@ -22,7 +22,7 @@ self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
   if (e.request.method !== 'GET' || url.origin !== location.origin) return;
   e.respondWith(
-    fetch(e.request)
+    fetch(e.request, { cache: 'no-cache' }) // 매번 서버에 최신인지 확인 (304 면 빠름)
       .then((res) => {
         if (res.ok) {
           const copy = res.clone();

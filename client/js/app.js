@@ -34,6 +34,7 @@ const store = {
 let current = null;
 
 function boot(reason) {
+  window.__csBooted = true;
   current?.destroy();
   current = null;
   const session = loadSession();

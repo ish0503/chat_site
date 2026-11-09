@@ -13,8 +13,37 @@
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
   <link rel="stylesheet" href="css/style.css">
+  <script>
+    // 시작 감시: 앱이 10초 안에 뜨지 않거나 파일을 불러오지 못하면, 무한 로딩 대신 원인과 복구 버튼을 보여줍니다.
+    (function () {
+      var shown = false;
+      function show(reason) {
+        if (shown || window.__csBooted) return;
+        shown = true;
+        var box = document.querySelector('.boot');
+        if (!box) return;
+        box.innerHTML = '<div class="boot-error"><h2>앱을 불러오지 못했습니다</h2>'
+          + '<p>업데이트 직후라 브라우저에 예전 파일이 남아 있을 수 있습니다. 아래 버튼을 눌러 주세요.</p>'
+          + '<button type="button" id="boot-fix">캐시 비우고 다시 불러오기</button>'
+          + '<pre></pre></div>';
+        box.querySelector('pre').textContent = reason || '';
+        document.getElementById('boot-fix').onclick = function () {
+          var jobs = [];
+          if (navigator.serviceWorker) jobs.push(navigator.serviceWorker.getRegistrations().then(function (rs) { return Promise.all(rs.map(function (r) { return r.unregister(); })); }));
+          if (window.caches) jobs.push(caches.keys().then(function (ks) { return Promise.all(ks.map(function (k) { return caches.delete(k); })); }));
+          Promise.all(jobs).catch(function () {}).then(function () {
+            location.replace(location.pathname + '?reload=' + Date.now() + location.hash);
+          });
+        };
+      }
+      window.addEventListener('error', function (e) { if (!window.__csBooted) show(e.message || '스크립트 오류'); });
+      window.addEventListener('unhandledrejection', function (e) { if (!window.__csBooted) show(String(e.reason && e.reason.message || e.reason)); });
+      setTimeout(function () { show('시간 초과: 10초 안에 앱이 시작되지 않았습니다.'); }, 10000);
+      window.__csBootFail = show;
+    })();
+  </script>
   <script src="env.js"></script>
-  <script type="module" src="js/app.js"></script>
+  <script type="module" src="js/app.js" onerror="window.__csBootFail && window.__csBootFail('js/app.js 를 불러오지 못했습니다.')"></script>
 </head>
 <body>
   <div id="app">
