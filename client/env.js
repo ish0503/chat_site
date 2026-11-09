@@ -2,7 +2,7 @@
 // 직접 값을 넣어도 됩니다. (비밀 값이 아닌 공개 ID만 넣으세요)
 window.CHAT_ENV = {
   APP_NAME: 'Chat Site',
-  SERVER_URL: '',          // 예: 'https://chat-site-server.onrender.com' (비워 두면 로컬 저장 모드)
+  SERVER_URL: 'permanent-jehanna-birdnoob-hanadi-57bdf537.apps.mistral.run/',          // 예: 'https://chat-site-server.onrender.com' (비워 두면 로컬 저장 모드)
   GOOGLE_CLIENT_ID: '302421047600-n6dgohce0mfpfi6oks2p7h5qjgid28il.apps.googleusercontent.com',    // 예: '1234-abc.apps.googleusercontent.com'
   APPLE_CLIENT_ID: '',     // Apple Services ID, 예: 'com.example.chatsite.web'
   APPLE_REDIRECT_URI: '',  // 비우면 현재 페이지 주소 사용
