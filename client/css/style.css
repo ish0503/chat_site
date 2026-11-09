@@ -193,6 +193,7 @@ select.input { appearance: auto; }
 .banner { display: flex; align-items: center; gap: 10px; padding: 8px 16px; font-size: 13px; background: var(--accent-soft); flex-wrap: wrap; }
 .banner > span:not(.icon):not(.spinner) { flex: 1; min-width: 180px; }
 .banner-warn { background: var(--warn-soft); }
+.warn-text { display: block; color: var(--warn); margin-top: 4px; }
 .banner .banner-reason { flex-basis: 100%; font-size: 12px; color: var(--muted); padding-left: 26px; }
 
 /* ───────────── 사이드바 ───────────── */
@@ -305,7 +306,11 @@ select.input { appearance: auto; }
 .msg-avatar + .msg-main { min-height: 40px; }
 .msg-text { white-space: normal; word-wrap: break-word; overflow-wrap: anywhere; user-select: text; padding-top: 1px; }
 .msg-text.jumbo { font-size: 44px; line-height: 1.2; }
-.msg.pending .msg-text, .msg.pending .msg-atts { opacity: 0.6; }
+.msg.pending .msg-text, .msg.pending .msg-atts { animation: pending-fade 0s 0.6s forwards; }
+@keyframes pending-fade { to { opacity: 0.6; } }
+/* 온라인 전송은 보통 금방 끝나므로 1초 넘게 걸릴 때만 "보내는 중" 표시 */
+.msg-status.late { animation: show-late 0s 1s both; }
+@keyframes show-late { from { visibility: hidden; } to { visibility: visible; } }
 .msg.failed .msg-text { color: var(--danger); }
 .edited { font-size: 11px; color: var(--dim); margin-left: 4px; }
 .msg-status { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 2px; margin-top: 2px; flex-wrap: wrap; }
@@ -380,6 +385,7 @@ mark { background: rgba(240, 178, 50, 0.45); color: inherit; border-radius: 2px;
 .composer-bar > .ellipsis { flex: 1; }
 .composer-bar > button { margin-left: auto; }
 .composer-bar + .attach-tray, .composer-bar + .attach-tray[hidden] + .composer-box { border-top-left-radius: 0; border-top-right-radius: 0; }
+.attach-tray.busy { min-height: 60px; background: var(--bg-3) linear-gradient(90deg, transparent, var(--hover), transparent) 0 0 / 200% 100%; animation: shimmer 1s infinite; }
 .attach-tray { display: flex; gap: 10px; overflow-x: auto; padding: 12px; background: var(--bg-3); border-radius: 8px 8px 0 0; border-bottom: 1px solid var(--border); }
 .attach-tray:not([hidden]) + .composer-box { border-top-left-radius: 0; border-top-right-radius: 0; }
 .tray-item { position: relative; width: 140px; flex: none; background: var(--bg-1); border-radius: 6px; padding: 8px; display: flex; flex-direction: column; gap: 4px; }

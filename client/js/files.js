@@ -3,6 +3,16 @@ import * as idb from './db.js';
 import { h } from './util.js';
 
 const urls = new Map();
+const mem = new Map(); // 방금 보낸 파일: 저장소에 쓰기 전에도 바로 보여주고 업로드하기 위해 메모리에 보관
+
+/** 보낸 파일을 즉시 표시/업로드할 수 있도록 메모리에 등록 */
+export function remember(att, blob) {
+  mem.set(att.id, { blob, name: att.name });
+  if (!urls.has(att.id)) urls.set(att.id, URL.createObjectURL(blob));
+}
+
+export const memBlob = (id) => mem.get(id) || null;
+export const release = (id) => mem.delete(id);
 
 export const isExpired = (att) => !!att.expiresAt && att.expiresAt <= Date.now();
 
@@ -25,6 +35,7 @@ export async function storeBlob(att, blob) {
 
 export function forget(ids) {
   for (const id of ids) {
+    mem.delete(id);
     const u = urls.get(id);
     if (u) URL.revokeObjectURL(u);
     urls.delete(id);

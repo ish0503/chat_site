@@ -469,8 +469,9 @@ export class DataService extends Emitter {
     const attachments = fileList.map((f) => ({
       id: uid(), name: f.name || 'file', size: f.size, mime: f.type || 'application/octet-stream', kind: kindOf(f.type), expiresAt: createdAt + this.fileTtlMs, local: true,
     }));
-    await Promise.all(fileList.map((f, i) => files.storeBlob(attachments[i], f)));
-    const reply = replyTo ? await idb.get('messages', replyTo) : null;
+    // 화면에 먼저 보여주고(저장소 쓰기를 기다리지 않음), 저장은 뒤에서 진행
+    fileList.forEach((f, i) => files.remember(attachments[i], f));
+    const reply = replyTo && typeof replyTo === 'object' ? replyTo : replyTo ? await idb.get('messages', replyTo) : null;
     const msg = {
       id: uid(),
       roomId,
@@ -478,7 +479,7 @@ export class DataService extends Emitter {
       author: { nickname: this.me.nickname, provider: this.me.provider },
       content: text,
       attachments,
-      replyTo: reply ? replyTo : null,
+      replyTo: reply ? reply.id : null,
       replyPreview: reply ? preview(reply) : null,
       reactions: {},
       pinned: false,
@@ -486,13 +487,25 @@ export class DataService extends Emitter {
       editedAt: null,
       pending: true,
     };
-    await this.#applyMessage(msg, true);
-    this.#deliver(msg);
+    this.emit('message', msg, { isNew: true });
+    this.#post({ t: 'msg', msg, isNew: true });
+    const blobsSaved = Promise.all(fileList.map((f, i) => files.storeBlob(attachments[i], f)));
+    await this.#persistMessage(msg);
+    this.#deliver(msg, blobsSaved);
     return msg;
   }
 
+  async #persistMessage(m) {
+    await idb.put('messages', m);
+    const room = this.nodes.get(m.roomId);
+    if (room && (room.lastMessageAt || 0) < m.createdAt) {
+      room.lastMessageAt = m.createdAt;
+      idb.put('nodes', room);
+    }
+  }
+
   /** 첨부 업로드 → 메시지 전송. 연결 문제면 outbox 에 저장 */
-  async #deliver(msg) {
+  async #deliver(msg, blobsSaved = null) {
     const payload = {
       id: msg.id, roomId: msg.roomId, content: msg.content, attachments: msg.attachments.map((a) => a.id), replyTo: msg.replyTo, createdAt: msg.createdAt,
     };
@@ -504,6 +517,7 @@ export class DataService extends Emitter {
           remaining.shift();
         }
         await this.request('msg:send', payload);
+        blobsSaved?.then(() => msg.attachments.forEach((a) => files.release(a.id)));
         return;
       } catch (e) {
         if (!isConnectivity(e)) {
@@ -513,12 +527,14 @@ export class DataService extends Emitter {
         }
       }
     }
+    await blobsSaved; // 오프라인 전송용 outbox 는 기기 저장소의 파일을 사용
+    msg.attachments.forEach((a) => files.release(a.id));
     for (const id of remaining) await this.#enqueue('upload', { id });
     await this.#enqueue('msg:send', payload);
   }
 
   async #uploadStored(id, onProgress) {
-    const rec = await idb.get('blobs', id);
+    const rec = files.memBlob(id) || (await idb.get('blobs', id));
     if (!rec?.blob) throw new OpError('missing_file');
     if (!this.socket?.connected) throw new OpError('offline');
     return api.upload(config.serverUrl, this.token, rec.blob, { id, name: rec.name, onProgress });
@@ -606,6 +622,15 @@ export class DataService extends Emitter {
       .filter((m) => (m.content || '').toLowerCase().includes(lower) || (m.attachments || []).some((a) => a.name.toLowerCase().includes(lower)))
       .sort((a, b) => b.createdAt - a.createdAt)
       .slice(0, 50);
+  }
+
+  /** 연결 진단: 전송 방식, 서버 왕복 시간, 서버↔MongoDB 시간 */
+  async diagnose() {
+    if (!this.isOnline) return null;
+    const t0 = performance.now();
+    const res = await this.request('latency', {}, 5000).catch(() => null);
+    if (!res) return null;
+    return { rtt: Math.round(performance.now() - t0), dbMs: res.dbMs, transport: this.socket?.io?.engine?.transport?.name || '?' };
   }
 
   sendTyping(roomId) {
