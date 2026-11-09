@@ -4,7 +4,13 @@ const read = (k) => {
   try { return localStorage.getItem(k); } catch { return null; }
 };
 
-const stripSlash = (u) => (u || '').trim().replace(/\/+$/, '');
+// 끝의 / 를 지우고, http(s):// 가 빠져 있으면 https:// 를 붙입니다.
+const stripSlash = (u) => {
+  const v = (u || '').trim().replace(/\/+$/, '');
+  if (!v) return '';
+  if (/^https?:\/\//i.test(v)) return v;
+  return /^(localhost|127\.0\.0\.1)(:|$)/.test(v) ? `http://${v}` : `https://${v}`;
+};
 
 export const config = {
   appName: env.APP_NAME || 'Chat Site',

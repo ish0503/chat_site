@@ -53,6 +53,12 @@ jobs:
             console.log("Generated client/env.js");
           '
 
+      # 예전 주소(…/chat_site/client/)로 들어와도 앱으로 이동하도록 리디렉트 페이지 추가
+      - name: Add redirect for old /client/ URL
+        run: |
+          mkdir -p client/client
+          printf '%s\n' '<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0; url=../"><script>location.replace("../"+location.search+location.hash)</script><a href="../">Chat Site</a>' > client/client/index.html
+
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
