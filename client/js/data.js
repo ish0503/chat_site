@@ -94,7 +94,7 @@ export class DataService extends Emitter {
     }
     this.#setStatus('connecting');
     try {
-      this.server = await api.health(config.serverUrl);
+      this.server = await api.health(config.serverUrl).catch((e) => { throw new OpError(e.status ? `http_${e.status}` : 'offline'); });
       if (!this.server.db) throw new OpError('db_unavailable');
       const token = await this.#ensureToken();
       await api.loadSocketIo();
@@ -130,7 +130,8 @@ export class DataService extends Emitter {
 
   #openSocket(token) {
     const s = window.io(config.serverUrl, {
-      auth: { token }, transports: ['websocket', 'polling'], reconnectionDelayMax: 10_000,
+      // WebSocket 을 막는 호스팅 환경도 있으므로 polling 으로 연결한 뒤 가능하면 WebSocket 으로 올립니다.
+      auth: { token }, transports: ['polling', 'websocket'], tryAllTransports: true, reconnectionDelayMax: 10_000,
     });
     this.socket = s;
     let authRetried = false;

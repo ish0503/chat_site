@@ -160,8 +160,21 @@ function start(session) {
   // ───────── 연결 상태 배너 ─────────
   let lastMode = null;
   let localDismissed = sessionStorage.getItem('cs.localDismissed') === '1';
+  // 연결이 안 되는 이유를 사람이 읽을 수 있게
+  function reasonText(code) {
+    if (!code) return '';
+    if (code === 'offline') return `서버 주소에 접속하지 못했습니다. 서버가 꺼져 있거나, 서버 환경변수 ALLOWED_ORIGINS 에 ${location.origin} 이 없습니다.`;
+    if (/^http_\d+$/.test(code)) return `서버가 ${code.slice(5)} 오류로 응답했습니다. SERVER_URL 주소가 맞는지 확인하세요.`;
+    if (code === 'db_unavailable') return '서버는 응답하지만 MongoDB 에 연결되지 않았습니다.';
+    if (code === 'unauthorized' || code === 'auth_needed') return '로그인 정보를 서버가 받아주지 않았습니다. 다시 로그인해 주세요.';
+    if (/xhr poll error|websocket error|transport|timeout/i.test(code)) return `실시간 연결(Socket.IO)에 실패했습니다 (${code}). 서버 호스팅이 연결을 막고 있거나 ALLOWED_ORIGINS 설정을 확인하세요.`;
+    if (/^load failed/.test(code)) return '실시간 연결 스크립트(socket.io)를 불러오지 못했습니다.';
+    return `오류: ${code}`;
+  }
+
   function renderBanner(st) {
     const btn = (label, fn) => h('button', { class: 'btn small secondary', onclick: fn }, label);
+    const reason = st.error ? h('span', { class: 'banner-reason' }, reasonText(st.error)) : null;
     let content2 = null;
     let kind = 'info';
     if (st.mode === 'local' && !localDismissed) {
@@ -170,13 +183,14 @@ function start(session) {
     } else if (st.mode === 'offline' && st.needsLogin) {
       kind = 'warn';
       content2 = [icon('lock', 16), h('span', {}, '서버와 동기화하려면 다시 로그인해야 합니다. 그동안 메시지는 이 기기에 저장됩니다.'),
-        btn('다시 로그인', () => relogin())];
+        btn('다시 로그인', () => relogin()), reason];
     } else if (st.mode === 'offline') {
       kind = 'warn';
       content2 = [icon('cloudOff', 16), h('span', {}, `${isMobile() ? '오프라인 · 기기에 저장 중, 연결되면 동기화' : '서버(MongoDB)에 연결할 수 없어 이 기기에 저장 중입니다. 연결되면 자동으로 동기화됩니다.'}${st.pendingOps ? ` (대기 ${st.pendingOps}개)` : ''}`),
-        btn('다시 연결', () => data.connect())];
+        btn('다시 연결', () => data.connect()), reason];
     } else if (st.mode === 'connecting' && lastMode === 'offline') {
-      content2 = [h('span', { class: 'spinner tiny' }), h('span', {}, '서버에 다시 연결하는 중…')];
+      kind = 'warn';
+      content2 = [h('span', { class: 'spinner tiny' }), h('span', {}, '서버에 다시 연결하는 중…'), reason];
     }
     banner.hidden = !content2;
     banner.className = `banner banner-${kind}`;
