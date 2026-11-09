@@ -76,6 +76,7 @@ export function upload(base, token, blob, { id, name, onProgress } = {}) {
       const code = x.status === 503 ? 'db_unavailable' : x.response?.error || 'upload_failed';
       reject(new OpError(code, x.status));
     };
+    x.timeout = 5 * 60_000; // 멈춘 업로드가 동기화를 영원히 막지 않도록
     x.onerror = () => reject(new OpError('offline'));
     x.ontimeout = () => reject(new OpError('timeout'));
     const fd = new FormData();
@@ -85,7 +86,7 @@ export function upload(base, token, blob, { id, name, onProgress } = {}) {
 }
 
 export async function fetchFile(base, token, id) {
-  const r = await req(`${base}/api/files/${encodeURIComponent(id)}`, { headers: { Authorization: `Bearer ${token}` } }, 0);
+  const r = await req(`${base}/api/files/${encodeURIComponent(id)}`, { headers: { Authorization: `Bearer ${token}` } }, 3 * 60_000);
   if (r.status === 410 || r.status === 404) throw new OpError('expired', r.status);
   if (!r.ok) throw await errorFrom(r);
   return r.blob();
