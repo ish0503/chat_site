@@ -1,5 +1,5 @@
 // 오프라인에서도 앱 화면을 열 수 있도록 앱 파일을 캐시합니다 (네트워크 우선).
-const CACHE = 'chat-site-v3';
+const CACHE = 'chat-site-v4';
 const SHELL = [
   './', './index.html', './env.js', './css/style.css', './manifest.webmanifest', './icons/icon.svg',
   './js/app.js', './js/config.js', './js/util.js', './js/markdown.js', './js/db.js', './js/api.js', './js/auth.js',

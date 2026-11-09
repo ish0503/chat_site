@@ -30,6 +30,10 @@ export async function renderGoogleButton(el, onSession, onError) {
     onError?.('Google 로그인 스크립트를 불러오지 못했습니다.');
     return false;
   }
+  if (!window.google?.accounts?.id) {
+    onError?.('Google 로그인을 사용할 수 없습니다. (광고 차단기 등으로 스크립트가 막혔을 수 있습니다)');
+    return false;
+  }
   window.google.accounts.id.initialize({
     client_id: config.googleClientId,
     callback: (r) => {

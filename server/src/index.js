@@ -220,6 +220,16 @@ const onlineCount = new Map(); // userId → 연결 수
 const calls = new Map(); // roomId → Map(sid → {sid, userId, state})
 const socketCall = new Map(); // sid → roomId
 
+// 방 종류 캐시 (메시지마다 방을 DB에서 다시 찾지 않도록). 서버 인스턴스는 1개를 전제로 합니다.
+const roomTypes = new Map();
+async function roomType(roomId) {
+  if (typeof roomId !== 'string') return null;
+  if (roomTypes.has(roomId)) return roomTypes.get(roomId);
+  const n = await store.col('nodes').findOne({ _id: roomId }, { projection: { type: 1 } });
+  if (n) roomTypes.set(roomId, n.type);
+  return n?.type || null;
+}
+
 const callList = (roomId) => [...(calls.get(roomId)?.values() || [])];
 const callsSnapshot = () => Object.fromEntries([...calls.keys()].map((r) => [r, callList(r)]));
 const emitCall = (roomId) => io.emit('call:participants', { roomId, list: callList(roomId) });
@@ -331,6 +341,7 @@ io.on('connection', (socket) => {
       createdBy: userId, createdAt: Date.now(), updatedAt: Date.now(), lastMessageAt: 0,
     };
     await nodes().insertOne(doc);
+    roomTypes.set(_id, type);
     io.emit('node:upsert', out(doc));
     return { node: out(doc) };
   });
@@ -375,6 +386,7 @@ io.on('connection', (socket) => {
     await deleteFiles(msgs.flatMap((m) => (m.attachments || []).map((a) => a.id)));
     await messages().deleteMany({ roomId: { $in: ids } });
     await nodes().deleteMany({ _id: { $in: ids } });
+    for (const rid of ids) roomTypes.delete(rid);
     for (const rid of ids) {
       for (const p of callList(rid)) {
         const s = io.sockets.sockets.get(p.sid);
@@ -396,22 +408,20 @@ io.on('connection', (socket) => {
 
   on('msg:send', { perm: 'sendMessage' }, async ({ id, roomId, content, attachments, replyTo, createdAt }) => {
     const _id = validId(id) ? id : randomUUID();
-    const existing = await messages().findOne({ _id });
-    if (existing) return { message: out(existing) };
-    const room = await nodes().findOne({ _id: roomId });
-    if (!room || room.type !== 'text') throw fail('room_not_found', 404);
     const text = cleanStr(content, LIMITS.content);
     const attIds = Array.isArray(attachments) ? attachments.filter((a) => typeof a === 'string').slice(0, LIMITS.attachments) : [];
-    const found = attIds.length
-      ? await store.files().find({ _id: { $in: attIds }, 'metadata.uploaderId': userId }).toArray()
-      : [];
+    // 서로 관계없는 조회는 동시에 (MongoDB 왕복 횟수를 줄여 전송 지연 감소)
+    const [type, found, r] = await Promise.all([
+      roomType(roomId),
+      attIds.length ? store.files().find({ _id: { $in: attIds }, 'metadata.uploaderId': userId }).toArray() : [],
+      typeof replyTo === 'string' ? messages().findOne({ _id: replyTo, roomId }) : null,
+    ]);
+    if (type !== 'text') throw fail('room_not_found', 404);
     const atts = attIds.map((a) => found.find((f) => f._id === a)).filter(Boolean).map(fileMeta);
     if (!text && !atts.length) throw fail('empty');
-    let replyPreview = null;
-    if (typeof replyTo === 'string') {
-      const r = await messages().findOne({ _id: replyTo, roomId });
-      if (r) replyPreview = { authorId: r.authorId, author: r.author, content: (r.content || '').slice(0, 120), attachments: (r.attachments || []).length };
-    }
+    const replyPreview = r
+      ? { authorId: r.authorId, author: r.author, content: (r.content || '').slice(0, 120), attachments: (r.attachments || []).length }
+      : null;
     const t = Date.now();
     const c = Number(createdAt);
     const doc = {
@@ -428,9 +438,16 @@ io.on('connection', (socket) => {
       createdAt: Number.isFinite(c) && c > t - 30 * 86400_000 && c <= t + 60_000 ? c : t,
       editedAt: null,
     };
-    await messages().insertOne(doc);
-    await nodes().updateOne({ _id: roomId, lastMessageAt: { $lt: doc.createdAt } }, { $set: { lastMessageAt: doc.createdAt } });
+    try {
+      await messages().insertOne(doc);
+    } catch (e) {
+      // 같은 id 로 다시 보낸 경우(오프라인 재전송 등) → 기존 메시지 반환
+      if (e.code === 11000) return { message: out(await messages().findOne({ _id })) };
+      throw e;
+    }
     io.emit('msg:upsert', out(doc));
+    // 방의 마지막 메시지 시각은 전송 완료를 기다리지 않고 갱신
+    nodes().updateOne({ _id: roomId, lastMessageAt: { $lt: doc.createdAt } }, { $set: { lastMessageAt: doc.createdAt } }).catch(() => {});
     return { message: out(doc) };
   });
 
@@ -514,14 +531,16 @@ io.on('connection', (socket) => {
     return { user: me() };
   });
 
+  // 연결 진단 (설정 화면에서 사용)
+  on('latency', { db: false }, async () => ({ dbMs: await store.pingMs().catch(() => null) }));
+
   on('typing', { db: false }, async ({ roomId }) => {
     if (typeof roomId === 'string') socket.broadcast.emit('typing', { roomId, userId });
   });
 
   // ── 통화 (WebRTC 시그널링) ──
   on('call:join', { perm: 'joinCall' }, async ({ roomId, state }) => {
-    const room = await nodes().findOne({ _id: roomId });
-    if (!room || room.type !== 'voice') throw fail('room_not_found', 404);
+    if ((await roomType(roomId)) !== 'voice') throw fail('room_not_found', 404);
     leaveCall(socket);
     const peers = callList(roomId);
     if (!calls.has(roomId)) calls.set(roomId, new Map());

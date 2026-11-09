@@ -127,6 +127,29 @@ export function debounce(fn, ms) {
 
 export const kindOf = (mime = '') => (mime.startsWith('image/') ? 'image' : mime.startsWith('video/') ? 'video' : mime.startsWith('audio/') ? 'audio' : 'file');
 
+/**
+ * 큰 사진(JPEG/WebP/HEIC)을 최대 2560px, JPEG 85% 로 줄여 전송 시간을 줄입니다.
+ * 줄어들지 않거나 변환할 수 없으면 원본을 그대로 돌려줍니다. PNG·GIF 는 건드리지 않습니다.
+ */
+export async function compressImage(file, { maxDim = 2560, quality = 0.85, minBytes = 1_000_000 } = {}) {
+  if (!/^image\/(jpeg|webp|heic|heif)$/i.test(file.type) || file.size < minBytes || !window.createImageBitmap) return file;
+  try {
+    const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
+    const scale = Math.min(1, maxDim / Math.max(bmp.width, bmp.height));
+    const c = document.createElement('canvas');
+    c.width = Math.round(bmp.width * scale);
+    c.height = Math.round(bmp.height * scale);
+    c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+    bmp.close?.();
+    const blob = await new Promise((r) => c.toBlob(r, 'image/jpeg', quality));
+    if (!blob || blob.size >= file.size) return file;
+    const name = `${file.name.replace(/\.(jpe?g|webp|heic|heif)$/i, '')}.jpg`;
+    return new File([blob], name, { type: 'image/jpeg', lastModified: file.lastModified });
+  } catch {
+    return file;
+  }
+}
+
 /** 이미지 파일을 정사각형으로 잘라 data URL로 변환 (프로필 사진용) */
 export async function imageToAvatar(file, size = 256) {
   const url = URL.createObjectURL(file);

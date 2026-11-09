@@ -226,7 +226,7 @@ const SETTINGS_KEY = 'cs.settings';
 export const settings = (() => {
   let s = {};
   try { s = JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {}; } catch { /* noop */ }
-  return { theme: 'dark', enterToSend: true, notify: false, compact: false, ...s };
+  return { theme: 'dark', enterToSend: true, notify: false, compact: false, compressImages: true, ...s };
 })();
 export function saveSettings(patch) {
   Object.assign(settings, patch);
@@ -293,6 +293,21 @@ export function settingsDialog(ctx) {
     }));
   const storage = h('span', { class: 'muted' }, '계산 중…');
   blobStats().then((s) => { storage.textContent = `기기에 저장된 파일 ${s.count}개 · ${fmtBytes(s.bytes)}`; });
+  const connInfo = h('p', { class: 'muted small' });
+  if (data.isOnline) {
+    connInfo.textContent = '연결 속도 측정 중…';
+    data.diagnose().then((d) => {
+      if (!d) { connInfo.textContent = ''; return; }
+      const tips = [];
+      if (d.transport !== 'websocket') tips.push('WebSocket 을 쓸 수 없어 느린 방식(polling)으로 연결되어 있습니다. 서버 호스팅의 WebSocket 지원을 확인하세요.');
+      if (d.dbMs > 60) tips.push('서버와 MongoDB 사이가 느립니다. 서버와 Atlas 클러스터를 같은 지역(리전)에 두면 빨라집니다.');
+      if (d.rtt > 300) tips.push('이 기기와 서버 사이가 느립니다. 사용자와 가까운 지역에 서버를 두면 빨라집니다.');
+      connInfo.replaceChildren(
+        h('span', {}, `연결 방식 ${d.transport === 'websocket' ? 'WebSocket' : 'HTTP polling'} · 서버 응답 ${d.rtt}ms${d.dbMs != null ? ` · 서버↔MongoDB ${d.dbMs}ms` : ''}`),
+        ...tips.map((t) => h('span', { class: 'warn-text' }, `⚠️ ${t}`)),
+      );
+    });
+  }
   const st = data.status();
   const modeText = { local: '로컬 모드 — 서버 없이 이 기기에만 저장', online: '온라인 — 서버(MongoDB)와 실시간 동기화', offline: '오프라인 — 기기에 저장 중, 재연결 시 동기화', connecting: '연결 중…' }[st.mode];
 
@@ -310,6 +325,7 @@ export function settingsDialog(ctx) {
         field('테마', theme),
         toggle('compact', '컴팩트 메시지 표시'),
         toggle('enterToSend', 'Enter로 전송 (Shift+Enter 줄바꿈)'),
+        toggle('compressImages', '사진 보낼 때 용량 줄이기 (더 빠르게 전송)'),
         toggle('notify', '새 메시지 알림', async (v) => {
           if (!v) return true;
           if (!('Notification' in window)) { toast('이 브라우저는 알림을 지원하지 않습니다.', 'warn'); return false; }
@@ -320,6 +336,7 @@ export function settingsDialog(ctx) {
       h('section', { class: 'settings-section' },
         h('h3', {}, icon('device', 16), ' 상태 · 저장 공간'),
         h('p', {}, modeText),
+        connInfo,
         st.pendingOps ? h('p', { class: 'muted' }, `동기화 대기 중인 작업 ${st.pendingOps}개`) : null,
         h('p', { class: 'field-hint' }, `첨부파일은 업로드 후 ${Math.round(data.fileTtlMs / 3600_000)}시간 동안만 내려받을 수 있습니다. 기간이 지나면 이 기기에 저장된 사본만 볼 수 있고 다시 내려받을 수는 없습니다.`),
         storage,

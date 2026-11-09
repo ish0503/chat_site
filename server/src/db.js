@@ -26,6 +26,14 @@ export function isNetworkError(e) {
   return /MongoNetwork|MongoServerSelection|MongoTopologyClosed|PoolClosed|MongoNotConnected/.test(n);
 }
 
+/** MongoDB 왕복 시간(ms) 측정 */
+export async function pingMs() {
+  if (!ready) return null;
+  const t0 = performance.now();
+  await db.command({ ping: 1 });
+  return Math.round(performance.now() - t0);
+}
+
 export function markDown() {
   setReady(false);
 }

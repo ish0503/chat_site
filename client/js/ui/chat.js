@@ -1,5 +1,5 @@
 import {
-  h, toast, fmtTime, fmtDate, fmtStamp, fmtFull, fmtBytes, fmtRemain, sameDay, throttle, debounce, isTouch, isMobile,
+  h, toast, fmtTime, fmtDate, fmtStamp, fmtFull, fmtBytes, fmtRemain, sameDay, throttle, debounce, isTouch, isMobile, compressImage,
 } from '../util.js';
 import { renderMarkdown, isEmojiOnly, mentionsMe } from '../markdown.js';
 import * as files from '../files.js';
@@ -131,7 +131,7 @@ export function createChatView(ctx) {
         h('button', { class: 'link-btn', onclick: () => data.retryMessage(m.id) }, '다시 보내기'), ' · ',
         h('button', { class: 'link-btn', onclick: () => data.deleteMessage(m.id) }, '삭제'))
       : m.pending && data.mode !== 'local'
-        ? h('div', { class: 'msg-status' }, icon('clock', 13), data.isOnline ? ' 보내는 중…' : ' 기기에 저장됨 · 연결되면 전송')
+        ? h('div', { class: `msg-status${data.isOnline ? ' late' : ''}` }, icon('clock', 13), data.isOnline ? ' 보내는 중…' : ' 기기에 저장됨 · 연결되면 전송')
         : null;
 
     const main = h('div', { class: 'msg-main' }, text, atts, reactEl, status);
@@ -514,9 +514,15 @@ export function createChatView(ctx) {
     }
   }
 
-  function addFiles(list) {
+  async function addFiles(list) {
     if (!data.can('sendMessage')) return;
     if (st.editing) cancelBar();
+    if (settings.compressImages) {
+      tray.hidden = false;
+      tray.classList.add('busy');
+      list = await Promise.all(list.map((f) => compressImage(f)));
+      tray.classList.remove('busy');
+    }
     for (const f of list) {
       if (f.size > data.maxUploadBytes) { toast(`'${f.name}' 파일이 너무 큽니다. (최대 ${fmtBytes(data.maxUploadBytes)})`, 'error'); continue; }
       if (st.files.length >= 10) { toast('한 번에 최대 10개까지 첨부할 수 있습니다.', 'warn'); break; }
@@ -562,7 +568,7 @@ export function createChatView(ctx) {
     }
     if (!text.trim() && !st.files.length) return;
     if (text.length > 4000) return toast('메시지는 4000자까지 보낼 수 있습니다.', 'warn');
-    const payload = { content: text, files: st.files, replyTo: st.replyTo?.id || null };
+    const payload = { content: text, files: st.files, replyTo: st.replyTo || null };
     st.files = [];
     st.replyTo = null;
     ta.value = '';
