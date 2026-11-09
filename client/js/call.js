@@ -14,6 +14,13 @@ export class CallManager extends Emitter {
     this.videoTrack = null;
     this.state = { muted: false, deaf: false, video: false, screen: false };
     this.speaking = new Set();
+    this.joinedAt = 0;
+    this.volumes = new Map(); // userId → 0~1
+    this.sinkId = '';
+    this.micId = '';
+    this.camId = '';
+    this.ptt = false; // 눌러서 말하기
+    this.pttDown = false;
     data.on('call:signal', (e) => this.#onSignal(e));
     data.on('calls', (roomId) => { if (!roomId || roomId === this.roomId) this.#syncPeers(); });
     data.on('disconnected', () => { if (this.roomId) this.leave(true); });
@@ -30,7 +37,7 @@ export class CallManager extends Emitter {
     if (this.roomId) await this.leave();
     this.local = new MediaStream();
     try {
-      const mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+      const mic = await navigator.mediaDevices.getUserMedia({ audio: this.#audioConstraints() });
       mic.getAudioTracks().forEach((t) => this.local.addTrack(t));
     } catch {
       toast('마이크를 사용할 수 없어 듣기 전용으로 참여합니다.', 'warn');
@@ -41,8 +48,87 @@ export class CallManager extends Emitter {
     const res = await this.data.request('call:join', { roomId, state: this.state });
     this.roomId = roomId;
     this.sid = res.sid;
+    this.joinedAt = Date.now();
+    this.#applyMicGate();
     for (const p of res.peers) this.#peer(p.sid, p.userId);
     this.emit('update');
+  }
+
+  #audioConstraints() {
+    return { echoCancellation: true, noiseSuppression: true, autoGainControl: true, ...(this.micId ? { deviceId: { exact: this.micId } } : {}) };
+  }
+
+  /** 마이크 켜짐 여부 = 음소거 아님 && (눌러서 말하기가 꺼져 있거나, 누르고 있음) */
+  #applyMicGate() {
+    const on = !this.state.muted && (!this.ptt || this.pttDown);
+    this.local?.getAudioTracks().forEach((t) => { t.enabled = on; });
+  }
+
+  setPtt(on) {
+    this.ptt = !!on;
+    this.pttDown = false;
+    this.#applyMicGate();
+    this.emit('update');
+  }
+
+  setTalking(down) {
+    if (!this.ptt || this.pttDown === down) return;
+    this.pttDown = down;
+    this.#applyMicGate();
+    this.emit('ptt', down);
+  }
+
+  get micLive() {
+    return !!this.local?.getAudioTracks().some((t) => t.enabled);
+  }
+
+  setVolume(userId, v) {
+    this.volumes.set(userId, v);
+    for (const p of this.peers.values()) if (p.userId === userId && p.audioEl) p.audioEl.volume = v;
+  }
+
+  async devices() {
+    try {
+      const list = await navigator.mediaDevices.enumerateDevices();
+      return {
+        mics: list.filter((d) => d.kind === 'audioinput'),
+        speakers: list.filter((d) => d.kind === 'audiooutput'),
+        cams: list.filter((d) => d.kind === 'videoinput'),
+      };
+    } catch {
+      return { mics: [], speakers: [], cams: [] };
+    }
+  }
+
+  async setMic(deviceId) {
+    this.micId = deviceId;
+    if (!this.local) return;
+    const s = await navigator.mediaDevices.getUserMedia({ audio: this.#audioConstraints() });
+    const track = s.getAudioTracks()[0];
+    const old = this.local.getAudioTracks()[0];
+    if (old) { this.local.removeTrack(old); old.stop(); }
+    this.local.addTrack(track);
+    for (const p of this.peers.values()) {
+      const sender = p.pc.getSenders().find((x) => x.track?.kind === 'audio' || x.track === old);
+      if (sender) await sender.replaceTrack(track); else p.pc.addTrack(track, this.local);
+    }
+    this.state.muted = false;
+    this.#applyMicGate();
+    this.#watchLevel('local', this.local);
+    this.#pushState();
+  }
+
+  async setSpeaker(deviceId) {
+    this.sinkId = deviceId;
+    for (const p of this.peers.values()) await p.audioEl?.setSinkId?.(deviceId).catch(() => {});
+  }
+
+  async setCamera(deviceId) {
+    this.camId = deviceId;
+    if (this.state.video && !this.state.screen) {
+      const s = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: deviceId } } });
+      await this.#setVideo(s.getVideoTracks()[0], false);
+    }
   }
 
   async leave(silent = false) {
@@ -55,6 +141,7 @@ export class CallManager extends Emitter {
     this.videoTrack = null;
     this.state = { muted: false, deaf: false, video: false, screen: false };
     this.speaking.clear();
+    this.joinedAt = 0;
     this.#stopLevel('local');
     if (!silent) this.data.request('call:leave', { roomId }).catch(() => {});
     this.emit('update');
@@ -64,7 +151,7 @@ export class CallManager extends Emitter {
     const tracks = this.local?.getAudioTracks() || [];
     if (!tracks.length) return toast('마이크가 연결되어 있지 않습니다.', 'warn');
     this.state.muted = !this.state.muted;
-    tracks.forEach((t) => { t.enabled = !this.state.muted; });
+    this.#applyMicGate();
     this.#pushState();
   }
 
@@ -77,7 +164,7 @@ export class CallManager extends Emitter {
   async toggleCamera() {
     if (this.state.video && !this.state.screen) return this.#stopVideo();
     try {
-      const s = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' } });
+      const s = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1280 }, height: { ideal: 720 }, ...(this.camId ? { deviceId: { exact: this.camId } } : { facingMode: 'user' }) } });
       await this.#setVideo(s.getVideoTracks()[0], false);
     } catch {
       toast('카메라를 사용할 수 없습니다.', 'error');
@@ -181,6 +268,8 @@ export class CallManager extends Emitter {
         }
         p.audioEl.srcObject = p.stream;
         p.audioEl.muted = this.state.deaf;
+        p.audioEl.volume = this.volumes.get(p.userId) ?? 1;
+        if (this.sinkId) p.audioEl.setSinkId?.(this.sinkId).catch(() => {});
         p.audioEl.play().catch(() => this.emit('autoplay-blocked'));
         this.#watchLevel(sid, p.stream);
       }
@@ -266,7 +355,7 @@ export class CallManager extends Emitter {
         let sum = 0;
         for (const v of buf) sum += (v - 128) ** 2;
         const rms = Math.sqrt(sum / buf.length);
-        const muted = key === 'local' && this.state.muted;
+        const muted = key === 'local' && !this.micLive;
         const on = rms > 6 && !muted;
         const id = key === 'local' ? this.sid : key;
         if (on !== this.speaking.has(id)) {

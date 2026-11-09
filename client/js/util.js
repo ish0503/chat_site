@@ -60,9 +60,16 @@ export function safeImageUrl(u) {
   return null;
 }
 
-const timeFmt = new Intl.DateTimeFormat('ko-KR', { hour: 'numeric', minute: '2-digit' });
+let timeFmt = new Intl.DateTimeFormat('ko-KR', { hour: 'numeric', minute: '2-digit' });
+let fullOpts = { year: 'numeric', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit' };
+/** 24시간제 표시 설정 */
+export function setClock24(on) {
+  timeFmt = new Intl.DateTimeFormat('ko-KR', { hour: 'numeric', minute: '2-digit', hourCycle: on ? 'h23' : 'h12' });
+  fullOpts = { ...fullOpts, hourCycle: on ? 'h23' : 'h12' };
+  fullFmt = new Intl.DateTimeFormat('ko-KR', fullOpts);
+}
 const dateFmt = new Intl.DateTimeFormat('ko-KR', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' });
-const fullFmt = new Intl.DateTimeFormat('ko-KR', { year: 'numeric', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+let fullFmt = new Intl.DateTimeFormat('ko-KR', fullOpts);
 
 export const fmtTime = (t) => timeFmt.format(t);
 export const fmtDate = (t) => dateFmt.format(t);

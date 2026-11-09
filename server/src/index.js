@@ -11,7 +11,12 @@ import {
   HttpError, verifyGoogleToken, verifyAppleToken, signSession, verifySession, hashSecret, sameHash,
 } from './auth.js';
 
-const LIMITS = { name: 100, topic: 300, content: 4000, nickname: 32, avatar: 300_000, attachments: 10 };
+const LIMITS = {
+  name: 100, topic: 300, content: 4000, nickname: 32, avatar: 300_000, attachments: 10, status: 80, bio: 300, emoji: 8, pollOption: 100, pollOptions: 10,
+};
+const PRESENCE = ['online', 'idle', 'dnd', 'invisible'];
+const MSG_KINDS = ['text', 'me', 'poll'];
+const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
 const ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
 const GUEST_ID_RE = /^guest:[A-Za-z0-9_-]{8,64}$/;
 const NODE_TYPES = ['folder', 'text', 'voice'];
@@ -25,7 +30,16 @@ const out = (doc) => {
   return { id: _id, ...rest };
 };
 const cleanUser = (u) => u && ({
-  id: u._id, provider: u.provider, nickname: u.nickname, avatar: u.avatar || null, createdAt: u.createdAt, lastSeen: u.lastSeen,
+  id: u._id,
+  provider: u.provider,
+  nickname: u.nickname,
+  avatar: u.avatar || null,
+  status: u.status || '',
+  bio: u.bio || '',
+  banner: u.banner || null,
+  presence: u.presence || 'online',
+  createdAt: u.createdAt,
+  lastSeen: u.lastSeen,
 });
 const kindOf = (mime = '') => (mime.startsWith('image/') ? 'image' : mime.startsWith('video/') ? 'video' : mime.startsWith('audio/') ? 'audio' : 'file');
 
@@ -220,14 +234,35 @@ const onlineCount = new Map(); // userId → 연결 수
 const calls = new Map(); // roomId → Map(sid → {sid, userId, state})
 const socketCall = new Map(); // sid → roomId
 
-// 방 종류 캐시 (메시지마다 방을 DB에서 다시 찾지 않도록). 서버 인스턴스는 1개를 전제로 합니다.
-const roomTypes = new Map();
-async function roomType(roomId) {
+// 방 정보 캐시 (메시지마다 방을 DB에서 다시 찾지 않도록). 서버 인스턴스는 1개를 전제로 합니다.
+const roomCache = new Map(); // roomId → {type, name, readonly, slowmode, createdBy}
+const cacheRoom = (n) => roomCache.set(n._id, {
+  type: n.type, name: n.name, readonly: !!n.readonly, slowmode: n.slowmode || 0, createdBy: n.createdBy,
+});
+async function roomInfo(roomId) {
   if (typeof roomId !== 'string') return null;
-  if (roomTypes.has(roomId)) return roomTypes.get(roomId);
-  const n = await store.col('nodes').findOne({ _id: roomId }, { projection: { type: 1 } });
-  if (n) roomTypes.set(roomId, n.type);
-  return n?.type || null;
+  if (roomCache.has(roomId)) return roomCache.get(roomId);
+  const n = await store.col('nodes').findOne({ _id: roomId });
+  if (n) cacheRoom(n);
+  return roomCache.get(roomId) || null;
+}
+const roomType = async (roomId) => (await roomInfo(roomId))?.type || null;
+const lastSent = new Map(); // `${roomId}:${userId}` → 마지막 전송 시각 (슬로우 모드)
+
+// 접속 상태: '오프라인으로 표시(invisible)' 사용자는 다른 사람에게 오프라인으로 보임
+const presenceOf = new Map(); // userId → presence
+const visibleOnline = () => [...onlineCount.keys()].filter((id) => presenceOf.get(id) !== 'invisible');
+
+/** 방 설정 값 정리 (이모지, 색상, 공지 전용, 슬로우 모드) */
+function roomSettings(src, type) {
+  const set = {};
+  if (src.emoji !== undefined) set.emoji = cleanStr(src.emoji, LIMITS.emoji);
+  if (src.color !== undefined) set.color = HEX_COLOR.test(src.color || '') ? src.color : null;
+  if (type === 'text') {
+    if (src.readonly !== undefined) set.readonly = !!src.readonly;
+    if (src.slowmode !== undefined) set.slowmode = Math.max(0, Math.min(21600, Math.floor(Number(src.slowmode) || 0)));
+  }
+  return set;
 }
 
 const callList = (roomId) => [...(calls.get(roomId)?.values() || [])];
@@ -268,7 +303,8 @@ io.on('connection', (socket) => {
   const me = () => socket.data.user;
   const userId = me().id;
   onlineCount.set(userId, (onlineCount.get(userId) || 0) + 1);
-  if (onlineCount.get(userId) === 1) io.emit('presence', { userId, online: true });
+  presenceOf.set(userId, me().presence || 'online');
+  if (onlineCount.get(userId) === 1 && presenceOf.get(userId) !== 'invisible') io.emit('presence', { userId, online: true });
 
   // 간단한 토큰 버킷 rate limit
   let tokens = 30;
@@ -313,14 +349,14 @@ io.on('connection', (socket) => {
     return {
       nodes: n.map(out),
       users: u.map(cleanUser),
-      online: [...onlineCount.keys()],
+      online: visibleOnline(),
       calls: callsSnapshot(),
       me: me(),
     };
   });
 
   // ── 폴더 / 채팅방 / 통화방 ──
-  on('node:create', { perm: 'manageNodes' }, async ({ id, type, name, parentId = null, topic, order }) => {
+  on('node:create', { perm: 'manageNodes' }, async ({ id, type, name, parentId = null, topic, order, ...extra }) => {
     if (!NODE_TYPES.includes(type)) throw fail('invalid_type');
     const nm = cleanStr(name, LIMITS.name);
     if (!nm) throw fail('invalid_name');
@@ -338,15 +374,15 @@ io.on('connection', (socket) => {
     }
     const doc = {
       _id, type, name: nm, parentId, topic: cleanStr(topic, LIMITS.topic), order: ord,
-      createdBy: userId, createdAt: Date.now(), updatedAt: Date.now(), lastMessageAt: 0,
+      createdBy: userId, createdAt: Date.now(), updatedAt: Date.now(), lastMessageAt: 0, ...roomSettings(extra, type),
     };
     await nodes().insertOne(doc);
-    roomTypes.set(_id, type);
+    cacheRoom(doc);
     io.emit('node:upsert', out(doc));
     return { node: out(doc) };
   });
 
-  on('node:update', { perm: 'manageNodes' }, async ({ id, name, topic, parentId, order }) => {
+  on('node:update', { perm: 'manageNodes' }, async ({ id, name, topic, parentId, order, ...extra }) => {
     const node = await nodes().findOne({ _id: id });
     if (!node) throw fail('not_found', 404);
     const set = { updatedAt: Date.now() };
@@ -369,8 +405,10 @@ io.on('connection', (socket) => {
       set.parentId = parentId;
     }
     if (order !== undefined && Number.isFinite(Number(order))) set.order = Number(order);
+    Object.assign(set, roomSettings(extra, node.type));
     await nodes().updateOne({ _id: id }, { $set: set });
     const doc = { ...node, ...set };
+    cacheRoom(doc);
     io.emit('node:upsert', out(doc));
     return { node: out(doc) };
   });
@@ -386,7 +424,7 @@ io.on('connection', (socket) => {
     await deleteFiles(msgs.flatMap((m) => (m.attachments || []).map((a) => a.id)));
     await messages().deleteMany({ roomId: { $in: ids } });
     await nodes().deleteMany({ _id: { $in: ids } });
-    for (const rid of ids) roomTypes.delete(rid);
+    for (const rid of ids) roomCache.delete(rid);
     for (const rid of ids) {
       for (const p of callList(rid)) {
         const s = io.sockets.sockets.get(p.sid);
@@ -406,31 +444,59 @@ io.on('connection', (socket) => {
     return { messages: list.reverse().map(out) };
   });
 
-  on('msg:send', { perm: 'sendMessage' }, async ({ id, roomId, content, attachments, replyTo, createdAt }) => {
+  on('msg:send', { perm: 'sendMessage' }, async ({
+    id, roomId, content, attachments, replyTo, createdAt, kind, poll, spoilers, forward,
+  }) => {
     const _id = validId(id) ? id : randomUUID();
-    const text = cleanStr(content, LIMITS.content);
+    const k = MSG_KINDS.includes(kind) ? kind : 'text';
+    let text = cleanStr(content, LIMITS.content);
     const attIds = Array.isArray(attachments) ? attachments.filter((a) => typeof a === 'string').slice(0, LIMITS.attachments) : [];
+    const fwdId = forward && typeof forward.messageId === 'string' ? forward.messageId : null;
     // 서로 관계없는 조회는 동시에 (MongoDB 왕복 횟수를 줄여 전송 지연 감소)
-    const [type, found, r] = await Promise.all([
-      roomType(roomId),
+    const [room, found, r, orig] = await Promise.all([
+      roomInfo(roomId),
       attIds.length ? store.files().find({ _id: { $in: attIds }, 'metadata.uploaderId': userId }).toArray() : [],
       typeof replyTo === 'string' ? messages().findOne({ _id: replyTo, roomId }) : null,
+      fwdId ? messages().findOne({ _id: fwdId }) : null,
     ]);
-    if (type !== 'text') throw fail('room_not_found', 404);
-    const atts = attIds.map((a) => found.find((f) => f._id === a)).filter(Boolean).map(fileMeta);
+    if (room?.type !== 'text') throw fail('room_not_found', 404);
+    if (room.readonly && !can(me(), 'manageNodes')) throw fail('readonly', 403);
+    const t = Date.now();
+    const slowKey = `${roomId}:${userId}`;
+    if (room.slowmode && room.createdBy !== userId && t - (lastSent.get(slowKey) || 0) < room.slowmode * 1000) throw fail('slowmode', 429);
+
+    const spoilerSet = new Set(Array.isArray(spoilers) ? spoilers : []);
+    let atts = attIds.map((a) => found.find((f) => f._id === a)).filter(Boolean).map((f) => ({ ...fileMeta(f), ...(spoilerSet.has(f._id) ? { spoiler: true } : {}) }));
+    let forwarded = null;
+    if (fwdId) {
+      if (!orig) throw fail('not_found', 404);
+      const src = await roomInfo(orig.roomId);
+      text = orig.kind === 'poll' ? `📊 ${orig.content}` : orig.content;
+      atts = orig.attachments || [];
+      forwarded = { messageId: orig._id, roomId: orig.roomId, roomName: src?.name || '', authorId: orig.authorId, authorNickname: orig.author?.nickname || '', createdAt: orig.createdAt };
+    }
+    let pollDoc = null;
+    if (k === 'poll') {
+      if (!can(me(), 'react')) throw fail('forbidden', 403);
+      const opts = (Array.isArray(poll?.options) ? poll.options : []).map((o) => cleanStr(o, LIMITS.pollOption)).filter(Boolean).slice(0, LIMITS.pollOptions);
+      if (!text || opts.length < 2) throw fail('invalid_poll');
+      pollDoc = { multi: !!poll.multi, options: opts.map((o, i) => ({ id: `o${i + 1}`, text: o, votes: [] })) };
+    }
     if (!text && !atts.length) throw fail('empty');
     const replyPreview = r
       ? { authorId: r.authorId, author: r.author, content: (r.content || '').slice(0, 120), attachments: (r.attachments || []).length }
       : null;
-    const t = Date.now();
     const c = Number(createdAt);
     const doc = {
       _id,
       roomId,
+      kind: fwdId ? 'text' : k,
       authorId: userId,
       author: { nickname: me().nickname, provider: me().provider },
       content: text,
       attachments: atts,
+      ...(pollDoc ? { poll: pollDoc } : {}),
+      ...(forwarded ? { forwarded } : {}),
       replyTo: replyPreview ? replyTo : null,
       replyPreview,
       reactions: {},
@@ -445,10 +511,30 @@ io.on('connection', (socket) => {
       if (e.code === 11000) return { message: out(await messages().findOne({ _id })) };
       throw e;
     }
+    lastSent.set(slowKey, t);
     io.emit('msg:upsert', out(doc));
     // 방의 마지막 메시지 시각은 전송 완료를 기다리지 않고 갱신
     nodes().updateOne({ _id: roomId, lastMessageAt: { $lt: doc.createdAt } }, { $set: { lastMessageAt: doc.createdAt } }).catch(() => {});
     return { message: out(doc) };
+  });
+
+  on('msg:vote', { perm: 'react' }, async ({ id, optionId, on: add }) => {
+    const m = await messages().findOne({ _id: id });
+    if (!m?.poll) throw fail('not_found', 404);
+    const pollDoc = m.poll;
+    if (!pollDoc.options.some((o) => o.id === optionId)) throw fail('invalid_option');
+    for (const o of pollDoc.options) {
+      const has = o.votes.includes(userId);
+      if (o.id === optionId) {
+        if (add && !has) o.votes.push(userId);
+        if (!add && has) o.votes = o.votes.filter((v) => v !== userId);
+      } else if (add && !pollDoc.multi && has) {
+        o.votes = o.votes.filter((v) => v !== userId); // 하나만 고르는 투표
+      }
+    }
+    await messages().updateOne({ _id: id }, { $set: { poll: pollDoc } });
+    io.emit('msg:upsert', out({ ...m, poll: pollDoc }));
+    return {};
   });
 
   on('msg:edit', { perm: 'sendMessage' }, async ({ id, content }) => {
@@ -457,7 +543,10 @@ io.on('connection', (socket) => {
     if (m.authorId !== userId) throw fail('forbidden', 403);
     const text = cleanStr(content, LIMITS.content);
     if (!text && !(m.attachments || []).length) throw fail('empty');
-    const set = { content: text, editedAt: Date.now() };
+    if (text === m.content) return {};
+    // 수정 기록 (최근 20개)
+    const editHistory = [...(m.editHistory || []), { content: m.content, at: m.editedAt || m.createdAt }].slice(-20);
+    const set = { content: text, editedAt: Date.now(), editHistory };
     await messages().updateOne({ _id: id }, { $set: set });
     io.emit('msg:upsert', out({ ...m, ...set }));
     return {};
@@ -503,19 +592,51 @@ io.on('connection', (socket) => {
     return { messages: list.map(out) };
   });
 
-  on('msg:search', {}, async ({ roomId, q }) => {
+  // 검색: 내용/파일 이름, 보낸 사람(from), 종류(has), 기간(before/after), 나를 멘션한 메시지(mentions)
+  on('msg:search', {}, async ({
+    roomId, q, from, has, before, after, mentions,
+  }) => {
+    const esc = (v) => v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const and = [];
     const query = cleanStr(q, 100);
-    if (!query) return { messages: [] };
-    const re = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
-    const filter = { content: re };
-    if (roomId) filter.roomId = roomId;
-    const list = await messages().find(filter).sort({ createdAt: -1 }).limit(50).toArray();
+    if (query) {
+      const re = new RegExp(esc(query), 'i');
+      and.push({ $or: [{ content: re }, { 'attachments.name': re }] });
+    }
+    if (typeof roomId === 'string' && roomId) and.push({ roomId });
+    if (typeof from === 'string' && from) and.push({ authorId: from });
+    if (['image', 'video', 'audio', 'file'].includes(has)) and.push({ 'attachments.kind': has });
+    if (has === 'media') and.push({ 'attachments.kind': { $in: ['image', 'video'] } });
+    if (has === 'link') and.push({ content: /https?:\/\//i });
+    if (has === 'pin') and.push({ pinned: true });
+    if (has === 'poll') and.push({ kind: 'poll' });
+    if (Number.isFinite(Number(before)) && before !== null) and.push({ createdAt: { $lt: Number(before) } });
+    if (Number.isFinite(Number(after)) && after !== null) and.push({ createdAt: { $gte: Number(after) } });
+    if (mentions) and.push({ content: new RegExp(`(^|\\s)@(${esc(me().nickname)}|everyone|here)(?=\\s|$)`) });
+    const scoped = and.filter((c) => !('roomId' in c));
+    if (!scoped.length) return { messages: [] };
+    const list = await messages().find({ $and: and }).sort({ createdAt: -1 }).limit(has ? 100 : 50).toArray();
     return { messages: list.map(out) };
   });
 
+  on('room:stats', {}, async ({ roomId }) => {
+    const [count, pins, authors] = await Promise.all([
+      messages().countDocuments({ roomId }),
+      messages().countDocuments({ roomId, pinned: true }),
+      messages().distinct('authorId', { roomId }),
+    ]);
+    return { count, pins, authors: authors.length };
+  });
+
   // ── 프로필 ──
-  on('profile:update', {}, async ({ nickname, avatar }) => {
+  on('profile:update', {}, async ({
+    nickname, avatar, status, bio, banner, presence,
+  }) => {
     const set = {};
+    if (status !== undefined) set.status = cleanStr(status, LIMITS.status);
+    if (bio !== undefined) set.bio = cleanStr(bio, LIMITS.bio);
+    if (banner !== undefined) set.banner = HEX_COLOR.test(banner || '') ? banner : null;
+    if (presence !== undefined && PRESENCE.includes(presence)) set.presence = presence;
     if (nickname !== undefined) {
       const n = cleanStr(nickname, LIMITS.nickname);
       if (!n) throw fail('invalid_nickname');
@@ -526,6 +647,12 @@ io.on('connection', (socket) => {
     socket.data.user = { ...me(), ...set };
     for (const s of io.sockets.sockets.values()) {
       if (s.data.user?.id === userId) s.data.user = { ...s.data.user, ...set };
+    }
+    if (set.presence) {
+      const was = presenceOf.get(userId);
+      presenceOf.set(userId, set.presence);
+      if (was !== 'invisible' && set.presence === 'invisible') io.emit('presence', { userId, online: false });
+      if (was === 'invisible' && set.presence !== 'invisible') io.emit('presence', { userId, online: true });
     }
     io.emit('user:upsert', me());
     return { user: me() };
