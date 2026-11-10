@@ -16,6 +16,30 @@
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="stylesheet" href="css/style.css">
   <script>
+    // 화면 높이 맞추기 (iPhone 홈 화면 앱 · 모바일): 키보드가 올라오면 보이는 영역만큼만 쓰고, 페이지가 위로 밀려 올라간 채 남지 않게 함
+    (function () {
+      var touch = window.matchMedia && matchMedia('(pointer: coarse)').matches;
+      var vv = window.visualViewport;
+      var root = document.documentElement;
+      if (!touch) return;
+      root.classList.add('touch');
+      var base = 0;
+      function fit() {
+        var h = vv ? vv.height : window.innerHeight;
+        if (h > base || !base) base = h; // 키보드가 없을 때의 높이
+        if (Math.abs(window.orientation || 0) !== fit.o) { fit.o = Math.abs(window.orientation || 0); base = h; }
+        root.style.setProperty('--app-h', Math.round(h) + 'px');
+        root.classList.toggle('kb-open', base - h > 120);
+        if (window.scrollY || root.scrollTop || (document.body && document.body.scrollTop)) window.scrollTo(0, 0);
+      }
+      if (vv) { vv.addEventListener('resize', fit); vv.addEventListener('scroll', fit); }
+      window.addEventListener('resize', fit);
+      window.addEventListener('orientationchange', function () { base = 0; setTimeout(fit, 300); });
+      document.addEventListener('focusout', function () { setTimeout(fit, 80); setTimeout(fit, 400); });
+      document.addEventListener('focusin', function () { setTimeout(fit, 80); setTimeout(fit, 400); });
+      window.addEventListener('pageshow', fit);
+      fit();
+    })();
     // 시작 감시: 앱이 10초 안에 뜨지 않거나 파일을 불러오지 못하면, 무한 로딩 대신 원인과 복구 버튼을 보여줍니다.
     (function () {
       var shown = false;

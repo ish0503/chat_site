@@ -44,6 +44,7 @@ async function ensureIndexes() {
     col('messages').createIndex({ roomId: 1, pinned: 1, pinnedAt: -1 }),
     col('nodes').createIndex({ parentId: 1, order: 1 }),
     col('nodes').createIndex({ members: 1 }, { sparse: true }),
+    col('wsitems').createIndex({ roomId: 1 }),
     files().createIndex({ 'metadata.expiresAt': 1 }),
     files().createIndex({ 'metadata.uploaderId': 1, 'metadata.persistent': 1 }),
     // 오류 보고는 30일 뒤 자동 삭제

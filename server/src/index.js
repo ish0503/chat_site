@@ -11,7 +11,7 @@ import {
   HttpError, verifyGoogleToken, verifyAppleToken, signSession, verifySession, hashSecret, sameHash,
 } from './auth.js';
 import { RateLimiter, httpLimit } from './ratelimit.js';
-import { aiEnabled, askAi } from './ai.js';
+import { aiEnabled, askAi, askBoard } from './ai.js';
 
 const LIMITS = {
   name: 100, topic: 300, content: 4000, nickname: 32, avatar: 300_000, attachments: 10, status: 80, bio: 300, emoji: 8, pollOption: 100, pollOptions: 10,
@@ -21,7 +21,16 @@ const MSG_KINDS = ['text', 'me', 'poll'];
 const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
 const ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
 const GUEST_ID_RE = /^guest:[A-Za-z0-9_-]{8,64}$/;
-const NODE_TYPES = ['folder', 'text', 'voice'];
+const NODE_TYPES = ['folder', 'text', 'voice', 'code', 'board'];
+// 메시지를 주고받을 수 있는 방: 일반 채팅방, 1:1 대화, 코드 작업실, 보드 방 (작업 공간에도 채팅이 딸려 있음)
+const CHAT_TYPES = ['text', 'dm', 'code', 'board'];
+const WORKSPACE_TYPES = ['code', 'board'];
+const BOARD_VIEWS = ['tree', 'sticky', 'mindmap', 'branch', 'kanban', 'timeline', 'debate'];
+// 작업 공간 항목: 코드 작업실의 프로젝트·폴더·파일, 보드 방의 카드
+const WS_KINDS = ['project', 'folder', 'file', 'card'];
+const WS_STATUS = ['todo', 'doing', 'review', 'done'];
+const WS_STANCE = ['pro', 'con', 'neutral'];
+const WS_LIMITS = { name: 100, text: 2000, content: 200_000, perRoom: 3000, batch: 300, history: 10 };
 const SHA256_RE = /^[0-9a-f]{64}$/;
 // 브라우저에서 바로 열어도 안전한 형식만 inline 으로 보냅니다 (HTML·SVG 등은 내려받기로)
 const INLINE_MIME = /^(image\/(png|jpe?g|gif|webp|avif|bmp)|video\/[\w.+-]+|audio\/[\w.+-]+|application\/pdf|text\/plain)$/;
@@ -411,6 +420,7 @@ function roomSettings(src, type) {
   const set = {};
   if (src.emoji !== undefined) set.emoji = cleanStr(src.emoji, LIMITS.emoji);
   if (src.color !== undefined) set.color = HEX_COLOR.test(src.color || '') ? src.color : null;
+  if (type === 'board' && src.view !== undefined) set.view = BOARD_VIEWS.includes(src.view) ? src.view : 'tree';
   if (type === 'text') {
     if (src.readonly !== undefined) set.readonly = !!src.readonly;
     if (src.slowmode !== undefined) set.slowmode = Math.max(0, Math.min(21600, Math.floor(Number(src.slowmode) || 0)));
@@ -614,6 +624,7 @@ io.on('connection', (socket) => {
     const msgs = await messages().find({ roomId: { $in: ids } }, { projection: { attachments: 1 } }).toArray();
     await deleteFiles(msgs.flatMap((m) => (m.attachments || []).map((a) => a.id)));
     await messages().deleteMany({ roomId: { $in: ids } });
+    await store.col('wsitems').deleteMany({ roomId: { $in: ids } });
     await nodes().deleteMany({ _id: { $in: ids } });
     for (const rid of ids) roomCache.delete(rid);
     for (const rid of ids) {
@@ -652,7 +663,7 @@ io.on('connection', (socket) => {
       typeof replyTo === 'string' ? messages().findOne({ _id: replyTo, roomId }) : null,
       fwdId ? messages().findOne({ _id: fwdId }) : null,
     ]);
-    if (!visibleTo(room, userId) || (room.type !== 'text' && room.type !== 'dm')) throw fail('room_not_found', 404);
+    if (!visibleTo(room, userId) || !CHAT_TYPES.includes(room.type)) throw fail('room_not_found', 404);
     if (room.readonly && !can(me(), 'manageNodes')) throw fail('readonly', 403);
     const members = room.type === 'dm' ? room.members : null;
     const t = Date.now();
@@ -930,6 +941,143 @@ io.on('connection', (socket) => {
     if (!f.metadata?.persistent || f.metadata.uploaderId !== userId) throw fail('forbidden', 403);
     await store.getBucket().delete(id);
     return {};
+  });
+
+  // ── 작업 공간 (코드 작업실의 프로젝트·폴더·파일, 보드 방의 카드) ──
+  const ws = () => store.col('wsitems');
+  async function accessWorkspace(roomId) {
+    const room = await accessRoom(roomId);
+    if (!WORKSPACE_TYPES.includes(room.type)) throw fail('room_not_found', 404);
+    return room;
+  }
+  const num = (v, min, max) => (Number.isFinite(Number(v)) ? Math.max(min, Math.min(max, Number(v))) : undefined);
+  /** 클라이언트가 보낸 항목에서 허용된 값만 골라 정리 */
+  function wsFields(src, kind) {
+    const set = {};
+    if (src.name !== undefined) set.name = cleanStr(src.name, WS_LIMITS.name).replace(/[\\/]/g, '_');
+    if (src.parentId !== undefined) set.parentId = validId(src.parentId) ? src.parentId : null;
+    if (src.order !== undefined) set.order = num(src.order, -1e9, 1e9) ?? 0;
+    if (kind === 'file' && src.content !== undefined) {
+      if (typeof src.content !== 'string' || src.content.length > WS_LIMITS.content) throw fail('file_too_large', 413);
+      set.content = src.content.replace(/\u0000/g, '');
+    }
+    if (kind === 'project' && src.template !== undefined) set.template = cleanStr(src.template, 20);
+    if (kind === 'card') {
+      if (src.text !== undefined) set.text = typeof src.text === 'string' ? src.text.replace(/\u0000/g, '').slice(0, WS_LIMITS.text) : '';
+      if (src.x !== undefined) set.x = num(src.x, -20000, 20000) ?? 0;
+      if (src.y !== undefined) set.y = num(src.y, -20000, 20000) ?? 0;
+      if (src.color !== undefined) set.color = HEX_COLOR.test(src.color || '') ? src.color : null;
+      if (src.status !== undefined) set.status = WS_STATUS.includes(src.status) ? src.status : null;
+      if (src.stance !== undefined) set.stance = WS_STANCE.includes(src.stance) ? src.stance : null;
+      if (src.date !== undefined) set.date = num(src.date, 0, 4e12) ?? null;
+      if (src.msgId !== undefined) set.msgId = validId(src.msgId) ? src.msgId : null;
+      if (src.sourceAuthor !== undefined) set.sourceAuthor = cleanStr(src.sourceAuthor, LIMITS.nickname);
+      if (src.ai !== undefined) set.ai = !!src.ai;
+    }
+    return set;
+  }
+  /** 항목 하나 저장 (없으면 만들고 있으면 고침). 반환: { doc, conflict } */
+  async function wsSave(roomId, src) {
+    if (!src || !validId(src.id) || !WS_KINDS.includes(src.kind)) throw fail('invalid_item');
+    const existing = await ws().findOne({ _id: src.id });
+    const t = Date.now();
+    if (!existing) {
+      const fields = wsFields(src, src.kind);
+      if (src.kind !== 'card' && !fields.name) throw fail('invalid_name');
+      const doc = {
+        _id: src.id, roomId, kind: src.kind, parentId: null, name: '', order: t, ...fields, createdBy: userId, createdAt: t, updatedBy: userId, updatedAt: t, rev: 1,
+      };
+      await ws().insertOne(doc);
+      return { doc };
+    }
+    if (existing.roomId !== roomId || existing.kind !== src.kind) throw fail('conflict', 409);
+    const set = wsFields(src, existing.kind);
+    if (set.name === '' && existing.kind !== 'card') delete set.name;
+    // 자기 자신이나 자기 하위 항목 안으로는 옮길 수 없음
+    if (set.parentId && set.parentId !== existing.parentId) {
+      const all = await ws().find({ roomId }, { projection: { parentId: 1 } }).toArray();
+      const byId = new Map(all.map((x) => [x._id, x]));
+      for (let cur = byId.get(set.parentId); cur; cur = byId.get(cur.parentId)) if (cur._id === existing._id) throw fail('invalid_move');
+    }
+    // 동시 편집: 내가 보던 버전(baseRev) 이후 다른 사람이 내용을 바꿨으면 conflict 로 알림. 덮어쓴 내용은 버전 기록에 남음
+    const changed = set.content !== undefined && set.content !== existing.content;
+    const conflict = changed && Number.isFinite(Number(src.baseRev)) && Number(src.baseRev) !== existing.rev;
+    if (changed) {
+      set.history = [...(existing.history || []), { content: existing.content || '', at: existing.updatedAt, by: existing.updatedBy }]
+        .filter((h, i, a) => i === a.length - 1 || h.content !== a[i + 1].content).slice(-WS_LIMITS.history);
+    }
+    Object.assign(set, { updatedBy: userId, updatedAt: t, rev: (existing.rev || 1) + 1 });
+    await ws().updateOne({ _id: existing._id }, { $set: set });
+    return { doc: { ...existing, ...set }, conflict };
+  }
+  // 목록에서는 파일 버전 기록을 빼고 보냄 (필요할 때 ws:history 로 받음)
+  const wsOut = (d) => { const { history, ...rest } = out(d); return { ...rest, versions: (history || []).length }; };
+
+  on('ws:list', {}, async ({ roomId }) => {
+    await accessWorkspace(roomId);
+    return { items: (await ws().find({ roomId }).toArray()).map(wsOut) };
+  });
+
+  on('ws:put', { perm: 'editWorkspace' }, async ({ roomId, item }) => {
+    await accessWorkspace(roomId);
+    if (!(await ws().findOne({ _id: item?.id }, { projection: { _id: 1 } })) && (await ws().countDocuments({ roomId })) >= WS_LIMITS.perRoom) throw fail('workspace_full', 413);
+    const { doc, conflict } = await wsSave(roomId, item);
+    io.emit('ws:upsert', { roomId, items: [wsOut(doc)], by: userId });
+    return { item: wsOut(doc), ...(conflict ? { conflict: true } : {}) };
+  });
+
+  // 여러 항목 한 번에 (프로젝트 템플릿, 파일 가져오기, 대화 → 보드 변환)
+  on('ws:putMany', { perm: 'editWorkspace', cost: 5 }, async ({ roomId, items }) => {
+    await accessWorkspace(roomId);
+    const list = Array.isArray(items) ? items.slice(0, WS_LIMITS.batch) : [];
+    if ((await ws().countDocuments({ roomId })) + list.length > WS_LIMITS.perRoom) throw fail('workspace_full', 413);
+    const saved = [];
+    for (const it of list) saved.push(wsOut((await wsSave(roomId, it)).doc));
+    if (saved.length) io.emit('ws:upsert', { roomId, items: saved, by: userId });
+    return { items: saved };
+  });
+
+  // 삭제: 하위 항목(폴더 안의 파일, 카드의 하위 카드)도 함께
+  on('ws:delete', { perm: 'editWorkspace' }, async ({ roomId, ids }) => {
+    await accessWorkspace(roomId);
+    const all = await ws().find({ roomId }, { projection: { parentId: 1 } }).toArray();
+    const have = new Set(all.map((x) => x._id));
+    const del = (Array.isArray(ids) ? ids : []).filter((x) => have.has(x));
+    for (let i = 0; i < del.length; i++) for (const x of all) if (x.parentId === del[i] && !del.includes(x._id)) del.push(x._id);
+    if (del.length) {
+      await ws().deleteMany({ _id: { $in: del } });
+      io.emit('ws:remove', { roomId, ids: del, by: userId });
+    }
+    return { ids: del };
+  });
+
+  on('ws:history', {}, async ({ roomId, id }) => {
+    await accessWorkspace(roomId);
+    const d = await ws().findOne({ _id: id, roomId });
+    if (!d) throw fail('not_found', 404);
+    return { history: d.history || [] };
+  });
+
+  // 누가 어떤 파일을 열고 있는지 (저장하지 않는 실시간 표시)
+  on('ws:focus', { db: false }, async ({ roomId, id }) => {
+    if (typeof roomId === 'string' && WORKSPACE_TYPES.includes(roomCache.get(roomId)?.type)) socket.broadcast.emit('ws:focus', { roomId, id: validId(id) ? id : null, userId });
+  });
+
+  // 대화를 AI 로 분석해 보드 카드 초안 만들기 (저장하지 않음 → 사용자가 미리 보고 승인하면 ws:putMany 로 저장)
+  on('ai:board', { perm: 'useAi' }, async ({ roomId, messageIds, view }) => {
+    if (!aiEnabled()) throw fail('ai_disabled', 501);
+    await accessRoom(roomId);
+    if (!limiters.ai.take(userId)) throw Object.assign(fail('rate_limited', 429), { retryAfter: limiters.ai.retryAfter(userId) });
+    const ids = Array.isArray(messageIds) ? messageIds.filter((x) => typeof x === 'string').slice(0, 300) : null;
+    const list = ids?.length
+      ? await messages().find({ _id: { $in: ids }, roomId }).sort({ createdAt: 1 }).toArray()
+      : (await messages().find({ roomId }).sort({ createdAt: -1 }).limit(150).toArray()).reverse();
+    if (!list.length) throw fail('empty');
+    try {
+      return await askBoard({ view: BOARD_VIEWS.includes(view) ? view : 'tree', messages: list });
+    } catch (e) {
+      throw fail(e.code || 'ai_unavailable', 503);
+    }
   });
 
   // ── AI 도우미 (서버에 ANTHROPIC_API_KEY 가 있을 때) ──

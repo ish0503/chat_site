@@ -3,7 +3,8 @@ import {
   h, Emitter, toast, isMobile, isTouch, safeImageUrl, debounce, fmtStamp, fmtBytes,
 } from './util.js';
 import { loadSession, saveSession, clearSession } from './auth.js';
-import { DataService, isChatRoom } from './data.js';
+import { DataService, isChatRoom, isWorkspace } from './data.js';
+import { createWorkspaceView } from './ui/workspace.js';
 import * as errorlog from './errorlog.js';
 import { CallManager } from './call.js';
 import { mentionsMe } from './markdown.js';
@@ -73,6 +74,8 @@ function start(session) {
   let splitChat = null; // 분할 화면의 두 번째 채팅창 (처음 열 때 만듦)
   ctx.splitRoomId = null;
   const callView = createCallView(ctx);
+  const wsView = createWorkspaceView(ctx);
+  ctx.mainMode = 'chat'; // 지금 가운데에 보이는 것: chat | workspace | call
   const panels = createPanels(ctx);
   const sidebar = createSidebar(ctx);
   const banner = h('div', { class: 'banner', hidden: true, role: 'status' });
@@ -115,7 +118,7 @@ function start(session) {
     const node = data.nodes.get(id);
     if (!isChatRoom(node)) return;
     if (isMobile()) { ctx.openRoom(id); return; }
-    if (id === ctx.roomId) { toast('이미 왼쪽에 열려 있는 방입니다.'); return; }
+    if (id === ctx.roomId && ctx.mainMode !== 'workspace') { toast('이미 왼쪽에 열려 있는 방입니다.'); return; }
     if (!splitChat) splitChat = createChatView(ctx, { split: true });
     ctx.splitRoomId = id;
     workspace.set({ split: id });
@@ -144,7 +147,21 @@ function start(session) {
     ctx.emit('room', null);
   }
 
-  ctx.openRoom = async (id, { replace } = {}) => {
+  // 작업 공간이 딸린 방(코드 작업실 · 보드)의 채팅 보기
+  ctx.showRoomChat = async (id) => {
+    if (ctx.splitRoomId === id) ctx.closeSplit();
+    ctx.roomId = id;
+    ctx.mainMode = 'chat';
+    mainEl = chat.el;
+    layoutPanes(mainEl);
+    const since = ctx.lastRead[id] || 0;
+    const hadUnread = ctx.unread.has(id);
+    ctx.markRead(id);
+    await chat.open(id, { since: hadUnread ? since : 0 });
+    ctx.emit('room', id);
+  };
+
+  ctx.openRoom = async (id, { replace, workspace: wantWs, reload } = {}) => {
     const node = data.nodes.get(id);
     if (!node || node.type === 'folder') return showEmpty();
     closeDrawer();
@@ -154,9 +171,24 @@ function start(session) {
     }
     store.set('cs.lastRoom', id);
     recentRooms.push(id);
+    if (isWorkspace(node)) {
+      // 코드 작업실 · 보드: 작업 공간을 먼저 보여 주고, 채팅은 제목 막대의 '채팅'이나 분할 화면으로
+      if (ctx.roomId === id && ctx.mainMode === 'workspace' && !reload) return;
+      if (ctx.roomId === id && ctx.mainMode === 'chat' && !wantWs) return;
+      ctx.roomId = id;
+      ctx.mainMode = 'workspace';
+      ctx.expandFolder?.(node.parentId);
+      mainEl = wsView.el;
+      layoutPanes(mainEl);
+      if (panels.kind === 'pins' || panels.kind === 'search') ctx.togglePanel(null);
+      await wsView.open(id, { reload });
+      ctx.emit('room', id);
+      return;
+    }
     if (ctx.roomId === id) return;
     if (ctx.splitRoomId === id) ctx.closeSplit(); // 분할 화면에 있던 방을 왼쪽으로 열면 분할 닫기
     ctx.roomId = id;
+    ctx.mainMode = node.type === 'voice' ? 'call' : 'chat';
     if (node.type !== 'dm') ctx.expandFolder?.(node.parentId);
     if (node.type === 'voice') {
       mainEl = callView.el;
@@ -176,7 +208,7 @@ function start(session) {
 
   ctx.jumpTo = async (roomId, msgId) => {
     if (ctx.splitRoomId === roomId && splitChat) { splitChat.jumpTo(msgId); return; }
-    if (ctx.roomId !== roomId) await ctx.openRoom(roomId);
+    if (isWorkspace(data.nodes.get(roomId))) { if (ctx.roomId !== roomId || ctx.mainMode !== 'chat') await ctx.showRoomChat(roomId); } else if (ctx.roomId !== roomId) await ctx.openRoom(roomId);
     chat.jumpTo(msgId);
   };
 
@@ -271,7 +303,7 @@ function start(session) {
   data.on('message', (m, info) => {
     if (!info?.isNew || m.authorId === data.me.id || blocked.has(m.authorId)) return;
     const visible = document.visibilityState === 'visible';
-    const viewing = visible && ((ctx.roomId === m.roomId && chat.atBottom) || (ctx.splitRoomId === m.roomId && splitChat?.atBottom));
+    const viewing = visible && ((ctx.roomId === m.roomId && ctx.mainMode === 'chat' && chat.atBottom) || (ctx.splitRoomId === m.roomId && splitChat?.atBottom));
     if (viewing) { ctx.markRead(m.roomId); return; }
     // 보관한 1:1 대화에 새 메시지가 오면 다시 목록에 표시
     if (data.nodes.get(m.roomId)?.type === 'dm' && archived.has(m.roomId)) archived.remove(m.roomId);
@@ -334,7 +366,7 @@ function start(session) {
   };
   settingsChanged.add(onSettings);
 
-  document.addEventListener('visibilitychange', () => { if (!document.hidden && ctx.roomId && chat.atBottom) ctx.markRead(ctx.roomId); });
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && ctx.roomId && ctx.mainMode === 'chat' && chat.atBottom) ctx.markRead(ctx.roomId); });
 
   // ───────── 연결 상태 배너 ─────────
   let lastMode = null;
@@ -471,7 +503,7 @@ function start(session) {
 
   // ───────── 통합 탐색: 방 · 사람 · 메시지 · 파일 (Ctrl/⌘+K 는 방·사람, Ctrl/⌘+Shift+F 는 전체) ─────────
   const pathOf = (n) => { if (n.type === 'dm') return '1:1 대화'; const p = []; for (let c = data.nodes.get(n.parentId); c; c = data.nodes.get(c.parentId)) p.unshift(c.name); return p.join(' / '); };
-  const roomIcon = (n) => (n.type === 'dm' ? avatar(data.dmPartner(n), 18, { presence: data.presenceOf(data.dmPartner(n).id) }) : n.emoji ? h('span', {}, n.emoji) : icon(n.type === 'voice' ? 'voice' : 'hash', 16));
+  const roomIcon = (n) => (n.type === 'dm' ? avatar(data.dmPartner(n), 18, { presence: data.presenceOf(data.dmPartner(n).id) }) : n.emoji ? h('span', {}, n.emoji) : icon({ voice: 'voice', code: 'code', board: 'grid' }[n.type] || 'hash', 16));
   function unifiedSearch({ full = false, title = full ? '통합 탐색' : '빠른 이동', onPickRoom = null, exclude = [] } = {}) {
     const input = h('input', { class: 'input', placeholder: full ? '방, 사람, 메시지, 파일 찾기' : '방 · 사람 이름', autofocus: true, 'aria-label': '검색' });
     const results = h('div', { class: 'qs-results', role: 'listbox' });

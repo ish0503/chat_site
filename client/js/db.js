@@ -2,8 +2,8 @@
 // 연결되면 outbox 의 작업이 서버로 동기화됩니다. IndexedDB를 쓸 수 없으면 메모리에 저장합니다.
 
 const DB_NAME = 'chat_site';
-const VERSION = 1;
-const STORES = ['nodes', 'messages', 'users', 'blobs', 'outbox'];
+const VERSION = 2;
+const STORES = ['nodes', 'messages', 'users', 'blobs', 'outbox', 'wsitems'];
 
 let dbp = null;
 let memory = null;
@@ -19,13 +19,18 @@ function openDb() {
     }
     req.onupgradeneeded = () => {
       const d = req.result;
-      d.createObjectStore('nodes', { keyPath: 'id' });
-      const m = d.createObjectStore('messages', { keyPath: 'id' });
-      m.createIndex('room_created', ['roomId', 'createdAt']);
-      m.createIndex('room', 'roomId');
-      d.createObjectStore('users', { keyPath: 'id' });
-      d.createObjectStore('blobs', { keyPath: 'id' });
-      d.createObjectStore('outbox', { keyPath: 'seq', autoIncrement: true });
+      const has = (n) => d.objectStoreNames.contains(n);
+      if (!has('nodes')) d.createObjectStore('nodes', { keyPath: 'id' });
+      if (!has('messages')) {
+        const m = d.createObjectStore('messages', { keyPath: 'id' });
+        m.createIndex('room_created', ['roomId', 'createdAt']);
+        m.createIndex('room', 'roomId');
+      }
+      if (!has('users')) d.createObjectStore('users', { keyPath: 'id' });
+      if (!has('blobs')) d.createObjectStore('blobs', { keyPath: 'id' });
+      if (!has('outbox')) d.createObjectStore('outbox', { keyPath: 'seq', autoIncrement: true });
+      // v2: 작업 공간 항목 (코드 파일, 보드 카드)
+      if (!has('wsitems')) d.createObjectStore('wsitems', { keyPath: 'id' }).createIndex('room', 'roomId');
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => resolve(null);
@@ -123,6 +128,12 @@ export async function roomAll(roomId) {
   return tx('messages', 'readonly', (s) => (s
     ? p(s.index('room').getAll(roomId))
     : [...memory.messages.values()].filter((m) => m.roomId === roomId)));
+}
+
+export async function wsRoom(roomId) {
+  return tx('wsitems', 'readonly', (s) => (s
+    ? p(s.index('room').getAll(roomId))
+    : [...memory.wsitems.values()].filter((m) => m.roomId === roomId)));
 }
 
 export async function outboxAdd(op) {

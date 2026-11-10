@@ -27,6 +27,8 @@ const MESSAGES = {
   ai_disabled: 'AI 도우미가 서버에 설정되어 있지 않습니다.',
   ai_busy: 'AI 도우미가 바쁩니다. 잠시 후 다시 시도해 주세요.',
   ai_unavailable: 'AI 도우미에 연결할 수 없습니다.',
+  workspace_full: '이 방의 작업 공간이 가득 찼습니다. 필요 없는 항목을 지워 주세요.',
+  invalid_item: '저장할 수 없는 항목입니다.',
   invalid_backup: '올바른 백업 파일이 아닙니다.',
   discarded: '동기화 대기열에서 취소한 메시지입니다.',
 };

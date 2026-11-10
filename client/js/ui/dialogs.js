@@ -19,7 +19,12 @@ import { errorText } from './errors.js';
 import { enhance } from './codeblock.js';
 import { openInstall, isStandalone } from '../install.js';
 
-const TYPE_LABEL = { text: '채팅방', voice: '통화방', folder: '폴더' };
+const TYPE_LABEL = { text: '채팅방', voice: '통화방', code: '코드 작업실', board: '보드', folder: '폴더' };
+const TYPE_INFO = {
+  text: ['hash', '메시지·이미지·파일'], voice: ['voice', '음성·영상·화면 공유'], code: ['code', '프로젝트 · 파일 편집 · 실행'],
+  board: ['grid', '트리·포스트잇·마인드맵·칸반…'], folder: ['folder', '방과 폴더를 묶기'],
+};
+const BOARD_VIEW_OPTS = [['tree', '🌳 트리'], ['sticky', '🗒️ 포스트잇'], ['mindmap', '🧠 마인드맵'], ['branch', '🌿 브랜치'], ['kanban', '📋 칸반'], ['timeline', '🕒 타임라인'], ['debate', '⚖️ 토론']];
 export const COLORS = ['#5865f2', '#3ba55c', '#faa61a', '#ed4245', '#eb459e', '#9b59b6', '#1abc9c', '#e67e22', '#80848e'];
 const SLOWMODE = [[0, '끄기'], [5, '5초'], [10, '10초'], [30, '30초'], [60, '1분'], [300, '5분'], [900, '15분'], [3600, '1시간']];
 
@@ -79,14 +84,17 @@ export function createNodeDialog(ctx, { parentId = null, type = 'text' } = {}) {
   const extraBox = h('div');
   let current = type;
   let extra = roomFields(current);
-  const placeholders = { text: '새 채팅방', voice: '새 통화방', folder: '새 폴더' };
+  const placeholders = { text: '새 채팅방', voice: '새 통화방', code: '새 코드 작업실', board: '새 보드', folder: '새 폴더' };
+  const viewSel = h('select', { class: 'input' }, BOARD_VIEW_OPTS.map(([v, l]) => h('option', { value: v }, l)));
+  const viewField = field('처음 보기 방식', viewSel, '같은 카드를 여러 방식으로 볼 수 있고, 방 안에서 언제든 바꿀 수 있습니다.');
   const render = () => {
-    typeRow.replaceChildren(...['text', 'voice', 'folder'].map((t) => h('button', {
+    viewField.hidden = current !== 'board';
+    typeRow.replaceChildren(...['text', 'voice', 'code', 'board', 'folder'].map((t) => h('button', {
       type: 'button', role: 'radio', 'aria-checked': String(t === current), class: `type-opt${t === current ? ' active' : ''}`,
       onclick: () => { current = t; name.placeholder = placeholders[t]; topicField.hidden = t === 'folder'; extra = roomFields(t); extraBox.replaceChildren(details()); render(); },
-    }, icon(t === 'text' ? 'hash' : t === 'voice' ? 'voice' : 'folder', 22),
+    }, icon(TYPE_INFO[t][0], 22),
     h('span', { class: 'type-name' }, TYPE_LABEL[t]),
-    h('span', { class: 'type-desc' }, t === 'text' ? '메시지·이미지·파일' : t === 'voice' ? '음성·영상·화면 공유' : '방과 폴더를 묶기'))));
+    h('span', { class: 'type-desc' }, TYPE_INFO[t][1]))));
   };
   const details = () => h('details', { class: 'more-opts' }, h('summary', {}, '추가 설정 (아이콘, 색, 공지 전용, 슬로우 모드)'), extra.els);
   const topicField = field('설명', topic);
@@ -96,7 +104,7 @@ export function createNodeDialog(ctx, { parentId = null, type = 'text' } = {}) {
   topicField.hidden = current === 'folder';
   openModal({
     title: '만들기',
-    body: [h('div', { class: 'field' }, h('span', { class: 'field-label' }, '종류'), typeRow), field('이름', name), topicField, field('위치', parent), extraBox],
+    body: [h('div', { class: 'field' }, h('span', { class: 'field-label' }, '종류'), typeRow), field('이름', name), viewField, topicField, field('위치', parent), extraBox],
     actions: [
       { label: '취소' },
       {
@@ -105,7 +113,7 @@ export function createNodeDialog(ctx, { parentId = null, type = 'text' } = {}) {
           const nm = name.value.trim() || placeholders[current];
           try {
             const node = await data.createNode({
-              type: current, name: nm, parentId: parent.value || null, topic: current === 'folder' ? '' : topic.value, ...extra.values(),
+              type: current, name: nm, parentId: parent.value || null, topic: current === 'folder' ? '' : topic.value, ...extra.values(), ...(current === 'board' ? { view: viewSel.value } : {}),
             });
             if (node.type !== 'folder') ctx.openRoom(node.id);
             else ctx.expandFolder(node.id);
