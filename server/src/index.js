@@ -1,5 +1,5 @@
 import http from 'node:http';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
@@ -10,6 +10,8 @@ import { can } from './permissions.js';
 import {
   HttpError, verifyGoogleToken, verifyAppleToken, signSession, verifySession, hashSecret, sameHash,
 } from './auth.js';
+import { RateLimiter, httpLimit } from './ratelimit.js';
+import { aiEnabled, askAi } from './ai.js';
 
 const LIMITS = {
   name: 100, topic: 300, content: 4000, nickname: 32, avatar: 300_000, attachments: 10, status: 80, bio: 300, emoji: 8, pollOption: 100, pollOptions: 10,
@@ -20,6 +22,13 @@ const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
 const ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
 const GUEST_ID_RE = /^guest:[A-Za-z0-9_-]{8,64}$/;
 const NODE_TYPES = ['folder', 'text', 'voice'];
+const SHA256_RE = /^[0-9a-f]{64}$/;
+// 브라우저에서 바로 열어도 안전한 형식만 inline 으로 보냅니다 (HTML·SVG 등은 내려받기로)
+const INLINE_MIME = /^(image\/(png|jpe?g|gif|webp|avif|bmp)|video\/[\w.+-]+|audio\/[\w.+-]+|application\/pdf|text\/plain)$/;
+
+// 1:1 대화방 id: 두 사용자 id 로 정해지므로 어느 기기에서 먼저 만들어도 같은 방이 됩니다 (client/js/data.js 와 같은 규칙)
+export const dmIdFor = (a, b) => `dm_${createHash('sha256').update([a, b].sort().join('|')).digest('hex').slice(0, 40)}`;
+const visibleTo = (node, uid) => !!node && (node.type !== 'dm' || (node.members || []).includes(uid));
 
 const fail = (message, status = 400) => new HttpError(status, message);
 const cleanStr = (v, max) => (typeof v === 'string' ? v.replace(/\u0000/g, '').trim().slice(0, max) : '');
@@ -54,15 +63,60 @@ function sanitizeAvatar(v) {
 function fileMeta(f) {
   return {
     id: f._id, name: f.filename, size: f.length, mime: f.metadata?.mime || 'application/octet-stream',
-    kind: f.metadata?.kind || 'file', expiresAt: f.metadata?.expiresAt || 0,
+    kind: f.metadata?.kind || 'file', expiresAt: f.metadata?.persistent ? 0 : f.metadata?.expiresAt || 0,
+    ...(f.metadata?.sha256 ? { sha256: f.metadata.sha256 } : {}),
+    ...(f.metadata?.persistent ? { persistent: true } : {}),
   };
 }
+const isFileExpired = (f) => !f.metadata?.persistent && (f.metadata?.expiresAt || 0) < Date.now();
+
+// ───────────────────────── 상태 모니터링용 지표 ─────────────────────────
+const startedAt = Date.now();
+const metrics = {
+  serverErrors: [], // 최근 서버 오류 시각
+  clientErrors: [], // 최근 클라이언트 오류 보고 시각
+  sends: [], // 최근 메시지 전송 시각 (분당 메시지 수)
+  lastErrors: [], // 최근 오류 요약 (관리자에게만 보임)
+};
+const HOUR = 3600_000;
+function track(list, t = Date.now(), keep = HOUR) {
+  list.push(t);
+  while (list.length && list[0] < t - keep) list.shift();
+  if (list.length > 10_000) list.splice(0, list.length - 10_000);
+}
+function noteError(where, e) {
+  track(metrics.serverErrors);
+  metrics.lastErrors.unshift({ at: Date.now(), where, message: String(e?.message || e).slice(0, 200) });
+  metrics.lastErrors.length = Math.min(metrics.lastErrors.length, 20);
+}
+
+// ───────────────────────── 요청 제한 ─────────────────────────
+const limiters = {
+  user: new RateLimiter({ capacity: 60, refillPerSec: 15 }), // 사용자별 전체 요청 (기기 여러 대 합산)
+  send: new RateLimiter({ capacity: 20, refillPerSec: 2 }), // 사용자별 메시지 전송
+  auth: new RateLimiter({ capacity: 20, refillPerSec: 0.2 }), // IP별 로그인
+  upload: new RateLimiter({ capacity: 30, refillPerSec: 0.5 }), // 사용자별 업로드
+  report: new RateLimiter({ capacity: 10, refillPerSec: 0.1 }), // IP별 오류 보고
+  ai: new RateLimiter({ capacity: 5, refillPerSec: 1 / 60 }), // 사용자별 AI 요청
+};
+setInterval(() => Object.values(limiters).forEach((l) => l.sweep()), 5 * 60_000).unref();
 
 // ───────────────────────── HTTP ─────────────────────────
 const app = express();
-const corsOptions = { origin: config.allowedOrigins.includes('*') ? true : config.allowedOrigins };
+// Koyeb 등 프록시 뒤에서 실제 접속 IP 를 쓰기 위해 (요청 제한용)
+app.set('trust proxy', Number(process.env.TRUST_PROXY ?? 1));
+app.disable('x-powered-by');
+const corsOptions = {
+  origin: config.allowedOrigins.includes('*') ? true : config.allowedOrigins,
+  exposedHeaders: ['X-Expires-At', 'X-Content-SHA256'],
+};
 app.use(cors(corsOptions));
+app.use((req, res, next) => {
+  res.set({ 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY' });
+  next();
+});
 app.use(express.json({ limit: '1mb' }));
+const ipKey = (req) => req.ip || 'unknown';
 
 const route = (fn) => async (req, res) => {
   try {
@@ -72,7 +126,7 @@ const route = (fn) => async (req, res) => {
       store.markDown();
       return res.status(503).json({ error: 'db_unavailable' });
     }
-    if (!e.expose) console.error(e);
+    if (!e.expose) { console.error(e); noteError(req.path, e); }
     res.status(e.status || 500).json({ error: e.expose ? e.message : 'server_error' });
   }
 };
@@ -122,13 +176,73 @@ app.get('/api/health', (req, res) => {
   res.json({
     ok: true,
     db: store.isReady(),
+    version: config.version,
     fileTtlHours: config.fileTtlHours,
     maxUploadMb: config.maxUploadMb,
+    storageQuotaMb: config.storageQuotaMb,
+    callMaxParticipants: config.callMaxParticipants,
+    sfuUrl: config.sfuUrl || null,
+    features: { dm: true, storage: true, ai: aiEnabled(), errorReports: true },
     providers: { google: config.googleClientIds.length > 0, apple: config.appleClientIds.length > 0, guest: true },
   });
 });
 
-app.post('/api/auth/google', requireDb, route(async (req, res) => {
+// 서버 상태 (로그인한 사용자). API · DB · WebSocket · 통화 · 오류 현황
+app.get('/api/status', route(async (req, res) => {
+  const user = store.isReady() ? await authHttp(req) : null;
+  const t0 = performance.now();
+  const dbPing = await store.pingMs().catch(() => null);
+  const mem = process.memoryUsage();
+  const reportsDay = store.isReady() ? await store.col('errors').countDocuments({ at: { $gt: Date.now() - 86400_000 } }).catch(() => null) : null;
+  const callRooms = [...calls.values()];
+  res.json({
+    version: config.version,
+    node: process.version,
+    uptimeSec: Math.round((Date.now() - startedAt) / 1000),
+    memoryMb: { rss: Math.round(mem.rss / 1048576), heap: Math.round(mem.heapUsed / 1048576) },
+    db: { ready: store.isReady(), pingMs: dbPing, memory: store.isMemory() },
+    sockets: io.engine.clientsCount,
+    onlineUsers: visibleOnline().length,
+    calls: { rooms: callRooms.length, participants: callRooms.reduce((n, m) => n + m.size, 0), max: config.callMaxParticipants, mode: config.sfuUrl ? 'sfu' : 'mesh' },
+    messagesPerMin: metrics.sends.filter((x) => x > Date.now() - 60_000).length,
+    errors: {
+      serverLastHour: metrics.serverErrors.length,
+      clientLastHour: metrics.clientErrors.length,
+      reportsLastDay: reportsDay,
+      recent: user && can(user, 'manageNodes') ? metrics.lastErrors.slice(0, 10) : undefined,
+    },
+    rateLimited: Object.fromEntries(Object.entries(limiters).map(([k, l]) => [k, l.blocked])),
+    features: { ai: aiEnabled() },
+    checkedInMs: Math.round(performance.now() - t0),
+  });
+}));
+
+// 자동 오류 보고: 클라이언트에서 난 오류(코드, 메시지, 브라우저 정보)를 모읍니다. 30일 뒤 자동 삭제.
+app.post('/api/errors', httpLimit(limiters.report, ipKey), route(async (req, res) => {
+  const list = Array.isArray(req.body?.reports) ? req.body.reports.slice(0, 20) : [];
+  let userId = null;
+  try { userId = (await verifySession((req.get('authorization') || '').slice(7))).sub; } catch { /* 로그인 없이도 보고 가능 */ }
+  const docs = list.map((r) => ({
+    _id: randomUUID(),
+    at: Date.now(),
+    clientAt: Number(r?.at) || null,
+    code: cleanStr(r?.code, 60),
+    message: cleanStr(r?.message, 500),
+    stack: cleanStr(r?.stack, 2000),
+    source: cleanStr(r?.source, 200),
+    version: cleanStr(r?.version, 40),
+    mode: cleanStr(r?.mode, 20),
+    ua: cleanStr(req.get('user-agent'), 300),
+    userId,
+  })).filter((d) => d.message);
+  for (const d of docs) track(metrics.clientErrors);
+  if (docs.length && store.isReady()) {
+    for (const d of docs) await store.col('errors').insertOne(d);
+  }
+  res.json({ ok: true, received: docs.length });
+}));
+
+app.post('/api/auth/google', httpLimit(limiters.auth, ipKey), requireDb, route(async (req, res) => {
   const p = await verifyGoogleToken(req.body?.credential);
   const user = await upsertUser({
     id: `google:${p.sub}`, provider: 'google', nickname: p.name || p.email?.split('@')[0], avatar: p.picture,
@@ -136,7 +250,7 @@ app.post('/api/auth/google', requireDb, route(async (req, res) => {
   await authResponse(res, user);
 }));
 
-app.post('/api/auth/apple', requireDb, route(async (req, res) => {
+app.post('/api/auth/apple', httpLimit(limiters.auth, ipKey), requireDb, route(async (req, res) => {
   const p = await verifyAppleToken(req.body?.idToken);
   const user = await upsertUser({
     id: `apple:${p.sub}`,
@@ -147,7 +261,7 @@ app.post('/api/auth/apple', requireDb, route(async (req, res) => {
   await authResponse(res, user);
 }));
 
-app.post('/api/auth/guest', requireDb, route(async (req, res) => {
+app.post('/api/auth/guest', httpLimit(limiters.auth, ipKey), requireDb, route(async (req, res) => {
   const { id, secret, nickname, avatar } = req.body || {};
   if (typeof id !== 'string' || !GUEST_ID_RE.test(id)) throw fail('invalid_guest_id');
   if (typeof secret !== 'string' || secret.length < 16 || secret.length > 128) throw fail('invalid_secret');
@@ -162,11 +276,34 @@ app.post('/api/auth/guest', requireDb, route(async (req, res) => {
   await authResponse(res, user);
 }));
 
+// 자동화 테스트 전용 로그인: 메모리 DB(MONGODB_URI=memory) + ALLOW_TEST_LOGIN=1 일 때만 켜짐 (실제 MongoDB 에서는 절대 켜지지 않음)
+if (store.isMemory() && process.env.ALLOW_TEST_LOGIN === '1') {
+  console.warn('[auth] 테스트 로그인 사용 중 (/api/auth/test)');
+  app.post('/api/auth/test', route(async (req, res) => {
+    const { id, provider, nickname } = req.body || {};
+    if (!['google', 'apple', 'guest'].includes(provider) || typeof id !== 'string') throw fail('invalid');
+    const user = await upsertUser({ id: `${provider}:${id}`, provider, nickname });
+    await authResponse(res, user);
+  }));
+}
+
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: config.maxUploadMb * 1024 * 1024, files: 1 } });
+
+async function storageUsage(userId) {
+  const list = await store.files().find({ 'metadata.uploaderId': userId, 'metadata.persistent': true }, { projection: { length: 1 } }).toArray();
+  return list.reduce((n, f) => n + (f.length || 0), 0);
+}
+async function checkQuota(userId, add) {
+  if ((await storageUsage(userId)) + add > config.storageQuotaMb * 1024 * 1024) throw fail('quota_exceeded', 413);
+}
+const sha256 = (buf) => createHash('sha256').update(buf).digest('hex');
 
 app.post('/api/upload', requireDb, route(async (req, res) => {
   const user = await authHttp(req);
   if (!can(user, 'sendMessage')) throw fail('forbidden', 403);
+  if (!limiters.upload.take(user.id)) throw fail('rate_limited', 429);
+  const keep = req.query.keep === '1';
+  if (keep && !can(user, 'storage')) throw fail('forbidden', 403);
   await new Promise((resolve, reject) => upload.single('file')(req, res, (err) => {
     if (err) reject(fail(err.code === 'LIMIT_FILE_SIZE' ? 'file_too_large' : 'upload_failed', err.code === 'LIMIT_FILE_SIZE' ? 413 : 400));
     else resolve();
@@ -180,8 +317,14 @@ app.post('/api/upload', requireDb, route(async (req, res) => {
   }
   const name = cleanStr(req.query.name, 200) || Buffer.from(req.file.originalname || 'file', 'latin1').toString('utf8');
   const mime = /^[\w.+-]+\/[\w.+-]+$/.test(req.file.mimetype || '') ? req.file.mimetype : 'application/octet-stream';
+  // 파일 무결성: 클라이언트가 계산한 SHA-256 과 서버가 받은 내용의 해시가 다르면 거부
+  const hash = sha256(req.file.buffer);
+  const claimed = String(req.query.sha256 || '').toLowerCase();
+  if (claimed && SHA256_RE.test(claimed) && claimed !== hash) throw fail('integrity_failed', 422);
+  if (keep) await checkQuota(user.id, req.file.size);
   const metadata = {
-    uploaderId: user.id, mime, kind: kindOf(mime), expiresAt: Date.now() + config.fileTtlHours * 3600_000,
+    uploaderId: user.id, mime, kind: kindOf(mime), sha256: hash,
+    ...(keep ? { persistent: true, expiresAt: 0 } : { expiresAt: Date.now() + config.fileTtlHours * 3600_000 }),
   };
   await new Promise((resolve, reject) => {
     const s = store.getBucket().openUploadStreamWithId(id, name, { metadata });
@@ -193,23 +336,33 @@ app.post('/api/upload', requireDb, route(async (req, res) => {
 }));
 
 app.get('/api/files/:id', requireDb, route(async (req, res) => {
-  await authHttp(req);
+  const user = await authHttp(req);
   const f = await store.files().findOne({ _id: req.params.id });
-  if (!f || (f.metadata?.expiresAt || 0) < Date.now()) throw fail('expired', 410);
+  if (!f || isFileExpired(f)) throw fail('expired', 410);
+  // 1:1 대화의 첨부파일은 대화 참여자만
+  if (f.metadata?.members && !f.metadata.members.includes(user.id)) throw fail('not_found', 404);
+  const mime = f.metadata?.mime || 'application/octet-stream';
   res.set({
-    'Content-Type': f.metadata?.mime || 'application/octet-stream',
+    'Content-Type': mime,
     'Content-Length': String(f.length),
-    'Content-Disposition': `inline; filename*=UTF-8''${encodeURIComponent(f.filename)}`,
+    'Content-Disposition': `${INLINE_MIME.test(mime) ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(f.filename)}`,
+    // 서버 주소로 직접 열어도 스크립트가 실행되지 않도록
+    'Content-Security-Policy': "sandbox; default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'",
     'Cache-Control': 'private, no-store',
-    'X-Expires-At': String(f.metadata?.expiresAt || 0),
+    'X-Expires-At': String(f.metadata?.persistent ? 0 : f.metadata?.expiresAt || 0),
+    ...(f.metadata?.sha256 ? { 'X-Content-SHA256': f.metadata.sha256 } : {}),
   });
   store.getBucket().openDownloadStream(f._id)
     .on('error', () => res.destroy())
     .pipe(res);
 }));
 
+/** 메시지 첨부파일 삭제 (내 보관함의 영구 파일은 남김) */
 async function deleteFiles(ids) {
+  if (!ids.length) return;
+  const keep = new Set((await store.files().find({ _id: { $in: ids }, 'metadata.persistent': true }, { projection: { _id: 1 } }).toArray()).map((f) => f._id));
   for (const id of ids) {
+    if (keep.has(id)) continue;
     try { await store.getBucket().delete(id); } catch { /* 이미 삭제됨 */ }
   }
 }
@@ -218,7 +371,7 @@ async function deleteFiles(ids) {
 setInterval(async () => {
   if (!store.isReady()) return;
   try {
-    const expired = await store.files().find({ 'metadata.expiresAt': { $lt: Date.now() } }, { projection: { _id: 1 } }).toArray();
+    const expired = await store.files().find({ 'metadata.persistent': { $ne: true }, 'metadata.expiresAt': { $lt: Date.now() } }, { projection: { _id: 1 } }).toArray();
     await deleteFiles(expired.map((f) => f._id));
     if (expired.length) console.log(`[files] 만료 파일 ${expired.length}개 삭제`);
   } catch (e) {
@@ -235,9 +388,9 @@ const calls = new Map(); // roomId → Map(sid → {sid, userId, state})
 const socketCall = new Map(); // sid → roomId
 
 // 방 정보 캐시 (메시지마다 방을 DB에서 다시 찾지 않도록). 서버 인스턴스는 1개를 전제로 합니다.
-const roomCache = new Map(); // roomId → {type, name, readonly, slowmode, createdBy}
+const roomCache = new Map(); // roomId → {type, name, readonly, slowmode, createdBy, members}
 const cacheRoom = (n) => roomCache.set(n._id, {
-  type: n.type, name: n.name, readonly: !!n.readonly, slowmode: n.slowmode || 0, createdBy: n.createdBy,
+  type: n.type, name: n.name, readonly: !!n.readonly, slowmode: n.slowmode || 0, createdBy: n.createdBy, ...(n.members ? { members: n.members } : {}),
 });
 async function roomInfo(roomId) {
   if (typeof roomId !== 'string') return null;
@@ -264,6 +417,12 @@ function roomSettings(src, type) {
   }
   return set;
 }
+
+// 1:1 대화방의 이벤트는 두 참여자에게만, 나머지는 모두에게
+const audience = (members) => (members ? io.to(members.map((u) => `user:${u}`)) : io);
+const emitNode = (doc) => audience(doc.type === 'dm' ? doc.members : null).emit('node:upsert', out(doc));
+const emitMsg = (doc) => audience(doc.members).emit('msg:upsert', out(doc));
+const emitMsgRemove = (m) => audience(m.members).emit('msg:remove', { id: m._id, roomId: m.roomId });
 
 const callList = (roomId) => [...(calls.get(roomId)?.values() || [])];
 const callsSnapshot = () => Object.fromEntries([...calls.keys()].map((r) => [r, callList(r)]));
@@ -305,23 +464,13 @@ io.on('connection', (socket) => {
   onlineCount.set(userId, (onlineCount.get(userId) || 0) + 1);
   presenceOf.set(userId, me().presence || 'online');
   if (onlineCount.get(userId) === 1 && presenceOf.get(userId) !== 'invisible') io.emit('presence', { userId, online: true });
+  socket.join(`user:${userId}`);
 
-  // 간단한 토큰 버킷 rate limit
-  let tokens = 30;
-  let last = Date.now();
-  const allow = () => {
-    const t = Date.now();
-    tokens = Math.min(30, tokens + ((t - last) / 1000) * 10);
-    last = t;
-    if (tokens < 1) return false;
-    tokens -= 1;
-    return true;
-  };
-
-  const on = (event, { perm, db = true, limit = true } = {}, fn) => {
+  // 요청 제한: 사용자별(여러 기기 합산) 토큰 버킷. 제한에 걸리면 다시 시도할 수 있는 시간(retryAfter)을 알려 줌
+  const on = (event, { perm, db = true, limit = true, cost = 1 } = {}, fn) => {
     socket.on(event, async (payload, ack) => {
       const reply = typeof ack === 'function' ? ack : () => {};
-      if (limit && !allow()) return reply({ ok: false, error: 'rate_limited' });
+      if (limit && !limiters.user.take(userId, cost)) return reply({ ok: false, error: 'rate_limited', retryAfter: limiters.user.retryAfter(userId, cost) });
       if (perm && !can(me(), perm)) return reply({ ok: false, error: 'forbidden' });
       if (db && !store.isReady()) return reply({ ok: false, error: 'db_unavailable' });
       try {
@@ -332,8 +481,8 @@ io.on('connection', (socket) => {
           store.markDown();
           return reply({ ok: false, error: 'db_unavailable' });
         }
-        if (!e.expose) console.error(`[${event}]`, e);
-        reply({ ok: false, error: e.expose ? e.message : 'server_error' });
+        if (!e.expose) { console.error(`[${event}]`, e); noteError(event, e); }
+        reply({ ok: false, error: e.expose ? e.message : 'server_error', ...(e.retryAfter ? { retryAfter: e.retryAfter } : {}) });
       }
     });
   };
@@ -341,9 +490,23 @@ io.on('connection', (socket) => {
   const nodes = () => store.col('nodes');
   const messages = () => store.col('messages');
 
+  /** 이 사용자가 볼 수 있는 방인지 확인 (1:1 대화방은 참여자만) */
+  async function accessRoom(roomId) {
+    const room = await roomInfo(roomId);
+    if (!visibleTo(room, userId)) throw fail('room_not_found', 404);
+    return room;
+  }
+  /** 이 사용자가 볼 수 있는 메시지인지 확인 */
+  async function accessMessage(id) {
+    const m = typeof id === 'string' ? await messages().findOne({ _id: id }) : null;
+    if (!m || (m.members && !m.members.includes(userId))) throw fail('not_found', 404);
+    return m;
+  }
+  const canDelete = (m) => m.authorId === userId || (!m.members && can(me(), 'deleteAnyMessage'));
+
   on('sync', {}, async () => {
     const [n, u] = await Promise.all([
-      nodes().find({}).toArray(),
+      nodes().find({ $or: [{ type: { $ne: 'dm' } }, { members: userId }] }).toArray(),
       store.col('users').find({}, { projection: { secretHash: 0 } }).toArray(),
     ]);
     return {
@@ -352,7 +515,34 @@ io.on('connection', (socket) => {
       online: visibleOnline(),
       calls: callsSnapshot(),
       me: me(),
+      serverTime: Date.now(),
     };
+  });
+
+  // 세션 갱신: 만료(30일) 전에 새 토큰을 받아 로그인 상태를 계속 유지
+  on('session:refresh', { db: false }, async () => ({ token: await signSession({ _id: userId, provider: me().provider }) }));
+
+  // ── 1:1 대화 ──
+  on('dm:open', { perm: 'directMessage' }, async ({ userId: other }) => {
+    if (typeof other !== 'string' || other === userId) throw fail('invalid_user');
+    const target = await store.col('users').findOne({ _id: other }, { projection: { _id: 1 } });
+    if (!target) throw fail('not_found', 404);
+    const _id = dmIdFor(userId, other);
+    const existing = await nodes().findOne({ _id });
+    if (existing) return { node: out(existing) };
+    const t = Date.now();
+    const doc = {
+      _id, type: 'dm', name: '', parentId: null, order: 0, members: [userId, other].sort(), createdBy: userId, createdAt: t, updatedAt: t, lastMessageAt: 0,
+    };
+    try {
+      await nodes().insertOne(doc);
+    } catch (e) {
+      if (e.code === 11000) return { node: out(await nodes().findOne({ _id })) };
+      throw e;
+    }
+    cacheRoom(doc);
+    emitNode(doc);
+    return { node: out(doc) };
   });
 
   // ── 폴더 / 채팅방 / 통화방 ──
@@ -378,13 +568,14 @@ io.on('connection', (socket) => {
     };
     await nodes().insertOne(doc);
     cacheRoom(doc);
-    io.emit('node:upsert', out(doc));
+    emitNode(doc);
     return { node: out(doc) };
   });
 
   on('node:update', { perm: 'manageNodes' }, async ({ id, name, topic, parentId, order, ...extra }) => {
     const node = await nodes().findOne({ _id: id });
     if (!node) throw fail('not_found', 404);
+    if (node.type === 'dm') throw fail('invalid_type');
     const set = { updatedAt: Date.now() };
     if (name !== undefined) {
       const nm = cleanStr(name, LIMITS.name);
@@ -409,12 +600,12 @@ io.on('connection', (socket) => {
     await nodes().updateOne({ _id: id }, { $set: set });
     const doc = { ...node, ...set };
     cacheRoom(doc);
-    io.emit('node:upsert', out(doc));
+    emitNode(doc);
     return { node: out(doc) };
   });
 
   on('node:delete', { perm: 'manageNodes' }, async ({ id }) => {
-    const all = await nodes().find({}, { projection: { parentId: 1, type: 1 } }).toArray();
+    const all = await nodes().find({ type: { $ne: 'dm' } }, { projection: { parentId: 1, type: 1 } }).toArray();
     if (!all.some((n) => n._id === id)) return { ids: [] };
     const ids = [id];
     for (let i = 0; i < ids.length; i++) {
@@ -437,6 +628,7 @@ io.on('connection', (socket) => {
 
   // ── 메시지 ──
   on('msg:list', {}, async ({ roomId, before, limit }) => {
+    await accessRoom(roomId);
     const n = Math.min(Math.max(Number(limit) || 50, 1), 100);
     const q = { roomId };
     if (Number.isFinite(Number(before))) q.createdAt = { $lt: Number(before) };
@@ -447,6 +639,7 @@ io.on('connection', (socket) => {
   on('msg:send', { perm: 'sendMessage' }, async ({
     id, roomId, content, attachments, replyTo, createdAt, kind, poll, spoilers, forward,
   }) => {
+    if (!limiters.send.take(userId)) throw Object.assign(fail('rate_limited', 429), { retryAfter: limiters.send.retryAfter(userId) });
     const _id = validId(id) ? id : randomUUID();
     const k = MSG_KINDS.includes(kind) ? kind : 'text';
     let text = cleanStr(content, LIMITS.content);
@@ -459,8 +652,9 @@ io.on('connection', (socket) => {
       typeof replyTo === 'string' ? messages().findOne({ _id: replyTo, roomId }) : null,
       fwdId ? messages().findOne({ _id: fwdId }) : null,
     ]);
-    if (room?.type !== 'text') throw fail('room_not_found', 404);
+    if (!visibleTo(room, userId) || (room.type !== 'text' && room.type !== 'dm')) throw fail('room_not_found', 404);
     if (room.readonly && !can(me(), 'manageNodes')) throw fail('readonly', 403);
+    const members = room.type === 'dm' ? room.members : null;
     const t = Date.now();
     const slowKey = `${roomId}:${userId}`;
     if (room.slowmode && room.createdBy !== userId && t - (lastSent.get(slowKey) || 0) < room.slowmode * 1000) throw fail('slowmode', 429);
@@ -469,7 +663,7 @@ io.on('connection', (socket) => {
     let atts = attIds.map((a) => found.find((f) => f._id === a)).filter(Boolean).map((f) => ({ ...fileMeta(f), ...(spoilerSet.has(f._id) ? { spoiler: true } : {}) }));
     let forwarded = null;
     if (fwdId) {
-      if (!orig) throw fail('not_found', 404);
+      if (!orig || (orig.members && !orig.members.includes(userId))) throw fail('not_found', 404);
       const src = await roomInfo(orig.roomId);
       text = orig.kind === 'poll' ? `📊 ${orig.content}` : orig.content;
       atts = orig.attachments || [];
@@ -491,6 +685,7 @@ io.on('connection', (socket) => {
       _id,
       roomId,
       kind: fwdId ? 'text' : k,
+      ...(members ? { members } : {}),
       authorId: userId,
       author: { nickname: me().nickname, provider: me().provider },
       content: text,
@@ -507,20 +702,29 @@ io.on('connection', (socket) => {
     try {
       await messages().insertOne(doc);
     } catch (e) {
-      // 같은 id 로 다시 보낸 경우(오프라인 재전송 등) → 기존 메시지 반환
-      if (e.code === 11000) return { message: out(await messages().findOne({ _id })) };
+      // 중복 메시지 방지: 같은 id 로 다시 보낸 경우(오프라인 재전송, 응답 시간 초과 후 재시도) → 새로 만들지 않고 기존 메시지 반환
+      if (e.code === 11000) {
+        const existing = await messages().findOne({ _id });
+        if (!existing || existing.authorId !== userId) throw fail('conflict', 409);
+        return { message: out(existing), duplicate: true };
+      }
       throw e;
     }
     lastSent.set(slowKey, t);
-    io.emit('msg:upsert', out(doc));
+    track(metrics.sends, t, 60_000);
+    // 1:1 대화의 첨부파일은 참여자만 내려받을 수 있게 표시
+    if (members && atts.length && !fwdId) {
+      store.files().updateMany({ _id: { $in: atts.map((a) => a.id) }, 'metadata.persistent': { $ne: true } }, { $set: { 'metadata.members': members } }).catch(() => {});
+    }
+    emitMsg(doc);
     // 방의 마지막 메시지 시각은 전송 완료를 기다리지 않고 갱신
     nodes().updateOne({ _id: roomId, lastMessageAt: { $lt: doc.createdAt } }, { $set: { lastMessageAt: doc.createdAt } }).catch(() => {});
     return { message: out(doc) };
   });
 
   on('msg:vote', { perm: 'react' }, async ({ id, optionId, on: add }) => {
-    const m = await messages().findOne({ _id: id });
-    if (!m?.poll) throw fail('not_found', 404);
+    const m = await accessMessage(id);
+    if (!m.poll) throw fail('not_found', 404);
     const pollDoc = m.poll;
     if (!pollDoc.options.some((o) => o.id === optionId)) throw fail('invalid_option');
     for (const o of pollDoc.options) {
@@ -533,37 +737,54 @@ io.on('connection', (socket) => {
       }
     }
     await messages().updateOne({ _id: id }, { $set: { poll: pollDoc } });
-    io.emit('msg:upsert', out({ ...m, poll: pollDoc }));
+    emitMsg({ ...m, poll: pollDoc });
     return {};
   });
 
-  on('msg:edit', { perm: 'sendMessage' }, async ({ id, content }) => {
-    const m = await messages().findOne({ _id: id });
-    if (!m) throw fail('not_found', 404);
+  // 수정 충돌 처리: base 는 수정하기 전에 보고 있던 버전(수정 시각, 없으면 작성 시각).
+  // 그 사이 다른 기기에서 먼저 수정했으면 conflict 를 알려 주되, 덮어쓴 내용은 수정 기록에 남아 잃어버리지 않음
+  on('msg:edit', { perm: 'sendMessage' }, async ({ id, content, base }) => {
+    const m = await accessMessage(id);
     if (m.authorId !== userId) throw fail('forbidden', 403);
     const text = cleanStr(content, LIMITS.content);
     if (!text && !(m.attachments || []).length) throw fail('empty');
     if (text === m.content) return {};
+    const current = m.editedAt || m.createdAt;
+    const conflict = Number.isFinite(Number(base)) && base !== null && Number(base) !== current;
     // 수정 기록 (최근 20개)
-    const editHistory = [...(m.editHistory || []), { content: m.content, at: m.editedAt || m.createdAt }].slice(-20);
-    const set = { content: text, editedAt: Date.now(), editHistory };
+    const editHistory = [...(m.editHistory || []), { content: m.content, at: current }].slice(-20);
+    const set = { content: text, editedAt: Math.max(Date.now(), current + 1), editHistory };
     await messages().updateOne({ _id: id }, { $set: set });
-    io.emit('msg:upsert', out({ ...m, ...set }));
-    return {};
+    emitMsg({ ...m, ...set });
+    return conflict ? { conflict: true } : {};
   });
 
   on('msg:delete', {}, async ({ id }) => {
-    const m = await messages().findOne({ _id: id });
-    if (!m) return {};
-    if (m.authorId !== userId && !can(me(), 'deleteAnyMessage')) throw fail('forbidden', 403);
+    const m = typeof id === 'string' ? await messages().findOne({ _id: id }) : null;
+    if (!m || (m.members && !m.members.includes(userId))) return {};
+    if (!canDelete(m)) throw fail('forbidden', 403);
     await messages().deleteOne({ _id: id });
     await deleteFiles((m.attachments || []).map((a) => a.id));
-    io.emit('msg:remove', { id, roomId: m.roomId });
+    emitMsgRemove(m);
     return {};
+  });
+
+  // 메시지 여러 개 한 번에 삭제 (최대 100개). 지울 권한이 있는 것만 지우고, 지운 id 목록을 돌려줌
+  on('msg:deleteMany', { cost: 5 }, async ({ ids }) => {
+    const list = Array.isArray(ids) ? [...new Set(ids.filter((x) => typeof x === 'string'))].slice(0, 100) : [];
+    if (!list.length) return { deleted: [] };
+    const found = await messages().find({ _id: { $in: list } }).toArray();
+    const ok = found.filter((m) => (!m.members || m.members.includes(userId)) && canDelete(m));
+    if (!ok.length) return { deleted: [] };
+    await messages().deleteMany({ _id: { $in: ok.map((m) => m._id) } });
+    await deleteFiles(ok.flatMap((m) => (m.attachments || []).map((a) => a.id)));
+    for (const m of ok) emitMsgRemove(m);
+    return { deleted: ok.map((m) => m._id) };
   });
 
   on('msg:react', { perm: 'react' }, async ({ id, emoji, on: add }) => {
     if (typeof emoji !== 'string' || !emoji || emoji.length > 16 || /[.$\u0000]/.test(emoji)) throw fail('invalid_emoji');
+    await accessMessage(id);
     const key = `reactions.${emoji}`;
     const m = await messages().findOneAndUpdate(
       { _id: id },
@@ -575,19 +796,21 @@ io.on('connection', (socket) => {
       await messages().updateOne({ _id: id, [key]: { $size: 0 } }, { $unset: { [key]: '' } });
       delete m.reactions[emoji];
     }
-    io.emit('msg:upsert', out(m));
+    emitMsg(m);
     return {};
   });
 
   on('msg:pin', { perm: 'pin' }, async ({ id, pinned }) => {
+    await accessMessage(id);
     const set = pinned ? { pinned: true, pinnedBy: userId, pinnedAt: Date.now() } : { pinned: false, pinnedBy: null, pinnedAt: null };
     const m = await messages().findOneAndUpdate({ _id: id }, { $set: set }, { returnDocument: 'after' });
     if (!m) throw fail('not_found', 404);
-    io.emit('msg:upsert', out(m));
+    emitMsg(m);
     return {};
   });
 
   on('msg:pins', {}, async ({ roomId }) => {
+    await accessRoom(roomId);
     const list = await messages().find({ roomId, pinned: true }).sort({ pinnedAt: -1 }).limit(100).toArray();
     return { messages: list.map(out) };
   });
@@ -615,11 +838,15 @@ io.on('connection', (socket) => {
     if (mentions) and.push({ content: new RegExp(`(^|\\s)@(${esc(me().nickname)}|everyone|here)(?=\\s|$)`) });
     const scoped = and.filter((c) => !('roomId' in c));
     if (!scoped.length) return { messages: [] };
+    if (typeof roomId === 'string' && roomId) await accessRoom(roomId);
+    // 내가 참여하지 않은 1:1 대화는 검색하지 않음
+    and.push({ $or: [{ members: { $exists: false } }, { members: userId }] });
     const list = await messages().find({ $and: and }).sort({ createdAt: -1 }).limit(has ? 100 : 50).toArray();
     return { messages: list.map(out) };
   });
 
   on('room:stats', {}, async ({ roomId }) => {
+    await accessRoom(roomId);
     const [count, pins, authors] = await Promise.all([
       messages().countDocuments({ roomId }),
       messages().countDocuments({ roomId, pinned: true }),
@@ -662,12 +889,70 @@ io.on('connection', (socket) => {
   on('latency', { db: false }, async () => ({ dbMs: await store.pingMs().catch(() => null) }));
 
   on('typing', { db: false }, async ({ roomId }) => {
-    if (typeof roomId === 'string') socket.broadcast.emit('typing', { roomId, userId });
+    if (typeof roomId !== 'string') return;
+    const room = roomCache.get(roomId) || (store.isReady() ? await roomInfo(roomId).catch(() => null) : null);
+    if (room?.type === 'dm') {
+      if (room.members.includes(userId)) socket.to(room.members.map((u) => `user:${u}`)).emit('typing', { roomId, userId });
+      return;
+    }
+    socket.broadcast.emit('typing', { roomId, userId });
+  });
+
+  // ── 내 보관함 (만료 없는 개인 파일 공간) ──
+  on('files:mine', { perm: 'storage' }, async () => {
+    const list = await store.files().find({ 'metadata.uploaderId': userId, 'metadata.persistent': true }).sort({ uploadDate: -1 }).toArray();
+    return { files: list.map((f) => ({ ...fileMeta(f), savedAt: f.metadata?.savedAt || +new Date(f.uploadDate || 0) || 0 })), usage: list.reduce((n, f) => n + f.length, 0), quota: config.storageQuotaMb * 1024 * 1024 };
+  });
+
+  // 채팅 첨부파일을 만료되기 전에 내 보관함으로 복사
+  on('file:keep', { perm: 'storage', cost: 5 }, async ({ id }) => {
+    const f = typeof id === 'string' ? await store.files().findOne({ _id: id }) : null;
+    if (!f || isFileExpired(f)) throw fail('expired', 410);
+    if (f.metadata?.members && !f.metadata.members.includes(userId)) throw fail('not_found', 404);
+    if (f.metadata?.persistent && f.metadata.uploaderId === userId) return { file: fileMeta(f) };
+    await checkQuota(userId, f.length);
+    const newId = randomUUID();
+    const metadata = {
+      uploaderId: userId, mime: f.metadata?.mime, kind: f.metadata?.kind || 'file', sha256: f.metadata?.sha256, persistent: true, expiresAt: 0, keptFrom: f._id, savedAt: Date.now(),
+    };
+    await new Promise((resolve, reject) => {
+      const up = store.getBucket().openUploadStreamWithId(newId, f.filename, { metadata });
+      up.on('error', reject);
+      up.on('finish', resolve);
+      store.getBucket().openDownloadStream(f._id).on('error', reject).pipe(up);
+    });
+    return { file: fileMeta({ _id: newId, filename: f.filename, length: f.length, metadata }) };
+  });
+
+  on('file:remove', { perm: 'storage' }, async ({ id }) => {
+    const f = typeof id === 'string' ? await store.files().findOne({ _id: id }) : null;
+    if (!f) return {};
+    if (!f.metadata?.persistent || f.metadata.uploaderId !== userId) throw fail('forbidden', 403);
+    await store.getBucket().delete(id);
+    return {};
+  });
+
+  // ── AI 도우미 (서버에 ANTHROPIC_API_KEY 가 있을 때) ──
+  on('ai:ask', { perm: 'useAi' }, async ({ roomId, mode, question }) => {
+    if (!aiEnabled()) throw fail('ai_disabled', 501);
+    const room = await accessRoom(roomId);
+    const q = cleanStr(question, 500);
+    if (mode !== 'summary' && !q) throw fail('empty');
+    if (!limiters.ai.take(userId)) throw Object.assign(fail('rate_limited', 429), { retryAfter: limiters.ai.retryAfter(userId) });
+    const recent = await messages().find({ roomId }).sort({ createdAt: -1 }).limit(300).toArray();
+    const roomName = room.type === 'dm' ? '1:1 대화' : room.name;
+    try {
+      return await askAi({ mode: mode === 'summary' ? 'summary' : 'ask', question: q, roomName, messages: recent.reverse() });
+    } catch (e) {
+      throw fail(e.code || 'ai_unavailable', 503);
+    }
   });
 
   // ── 통화 (WebRTC 시그널링) ──
   on('call:join', { perm: 'joinCall' }, async ({ roomId, state }) => {
     if ((await roomType(roomId)) !== 'voice') throw fail('room_not_found', 404);
+    const already = calls.get(roomId)?.has(socket.id);
+    if (!already && callList(roomId).length >= config.callMaxParticipants) throw fail('call_full', 409);
     leaveCall(socket);
     const peers = callList(roomId);
     if (!calls.has(roomId)) calls.set(roomId, new Map());
@@ -675,7 +960,7 @@ io.on('connection', (socket) => {
     socketCall.set(socket.id, roomId);
     socket.join(`call:${roomId}`);
     emitCall(roomId);
-    return { sid: socket.id, peers };
+    return { sid: socket.id, peers, max: config.callMaxParticipants, mode: config.sfuUrl ? 'sfu' : 'mesh' };
   });
 
   on('call:leave', { db: false }, async () => {

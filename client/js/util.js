@@ -178,14 +178,26 @@ export async function imageToAvatar(file, size = 256) {
 }
 
 let toastBox;
-export function toast(msg, type = 'info', ms = 3200) {
+/** 알림 띄우기. action: { label, onClick } 을 주면 버튼(예: 실행 취소)이 붙음 */
+export function toast(msg, type = 'info', ms = 3200, action = null) {
   if (!toastBox) {
     toastBox = h('div', { class: 'toasts', role: 'status', 'aria-live': 'polite' });
     document.body.append(toastBox);
   }
-  const t = h('div', { class: `toast toast-${type}` }, msg);
+  const close = () => { t.classList.add('out'); setTimeout(() => t.remove(), 300); };
+  const t = h('div', { class: `toast toast-${type}${action ? ' has-action' : ''}` }, h('span', {}, msg),
+    action ? h('button', { class: 'toast-action', type: 'button', onclick: () => { close(); action.onClick(); } }, action.label) : null);
   toastBox.append(t);
-  setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), 300); }, ms);
+  setTimeout(close, ms);
+  return { close };
+}
+
+/** 저사양 기기 감지 (애니메이션 자동 줄이기) */
+export function isLowEndDevice() {
+  const mem = navigator.deviceMemory;
+  const cores = navigator.hardwareConcurrency;
+  const saveData = navigator.connection?.saveData;
+  return !!saveData || (mem && mem <= 2) || (cores && cores <= 2) || matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
 export const isTouch = () => matchMedia('(pointer: coarse)').matches;

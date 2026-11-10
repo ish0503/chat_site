@@ -1,11 +1,42 @@
 import { h, toast, fmtStamp, fmtBytes, escapeHtml, debounce } from '../util.js';
 import { renderMarkdown } from '../markdown.js';
 import * as files from '../files.js';
-import { bookmarks, personal, blocked } from '../local.js';
+import {
+  bookmarks, personal, blocked, searchHistory,
+} from '../local.js';
 import { icon } from './icons.js';
 import { avatar, badge, PRESENCE_LABEL } from './common.js';
 import { profileDialog, listSetting, lightbox } from './dialogs.js';
 import { errorText } from './errors.js';
+import { attachResizer } from './sidebar.js';
+
+/** 멤버 목록 (오른쪽 패널, 그리고 넓은 화면의 '멤버 목록 항상 표시' 칸에서 함께 사용) */
+export function renderMemberList(ctx, container) {
+  const { data } = ctx;
+  const users = [...data.users.values()].sort((a, b) => (a.nickname || '').localeCompare(b.nickname || '', 'ko'));
+  const pres = (u) => data.presenceOf(u.id);
+  const on = users.filter((u) => pres(u) !== 'offline');
+  const off = users.filter((u) => pres(u) === 'offline');
+  const row = (u) => h('div', { class: `member${pres(u) === 'offline' ? ' offline' : ''}` },
+    h('button', { class: 'member-main', type: 'button', onclick: () => profileDialog(ctx, u.id) },
+      avatar(u, 32, { presence: pres(u) }),
+      h('span', { class: 'member-meta' },
+        h('span', { class: 'member-name ellipsis' }, u.nickname, u.id === data.me.id ? h('span', { class: 'muted small' }, ' (나)') : null, blocked.has(u.id) ? ' 🚫' : ''),
+        u.status ? h('span', { class: 'member-status ellipsis' }, u.status) : pres(u) === 'idle' || pres(u) === 'dnd' ? h('span', { class: 'member-status' }, PRESENCE_LABEL[pres(u)]) : null),
+      badge(u.provider)),
+    u.id !== data.me.id && data.can('directMessage') ? h('button', {
+      class: 'icon-btn tiny member-dm', type: 'button', title: `${u.nickname}님에게 메시지`, 'aria-label': `${u.nickname}님에게 1:1 메시지`,
+      onclick: async () => { try { const n = await data.openDm(u.id); ctx.openRoom(n.id); } catch (e) { toast(errorText(e), 'error'); } },
+    }, icon('message', 16)) : null);
+  container.replaceChildren(...[
+    data.mode !== 'online' ? h('p', { class: 'muted small pad' }, '서버에 연결되어 있지 않아 접속 상태를 알 수 없습니다.') : null,
+    h('div', { class: 'member-group' }, `온라인 — ${on.length}`), ...on.map(row),
+    h('div', { class: 'member-group' }, `오프라인 — ${off.length}`), ...off.map(row),
+  ].filter(Boolean));
+}
+
+/** 패널 로딩 스켈레톤 */
+const skeletonCards = (n = 4) => h('div', { class: 'skeleton-list pad' }, Array.from({ length: n }, () => h('div', { class: 'skeleton-card' }, h('span', { class: 'sk sk-name' }), h('span', { class: 'sk sk-line' }), h('span', { class: 'sk sk-line short' }))));
 
 const HAS_ALIAS = {
   image: 'image', 이미지: 'image', 사진: 'image', video: 'video', 동영상: 'video', 영상: 'video', audio: 'audio', 오디오: 'audio', 음성: 'audio',
@@ -44,7 +75,10 @@ export function createPanels(ctx) {
   const { data } = ctx;
   const titleEl = h('h3', {});
   const bodyEl = h('div', { class: 'panel-body' });
+  const resizer = h('div', { class: 'resizer panel-resizer', role: 'separator', 'aria-orientation': 'vertical', 'aria-label': '패널 너비 조절', title: '끌어서 너비 조절 (두 번 누르면 기본값)' });
+  attachResizer(resizer, '--panel-w', 'panelWidth', 280, 560, -1);
   const el = h('aside', { class: 'panel', hidden: true, 'aria-label': '사이드 패널' },
+    resizer,
     h('header', { class: 'panel-head' }, titleEl, h('button', { class: 'icon-btn', 'aria-label': '패널 닫기', onclick: () => ctx.togglePanel(null) }, icon('x'))),
     bodyEl);
   let kind = null;
@@ -53,7 +87,7 @@ export function createPanels(ctx) {
   let mediaTab = 'media';
 
   const authorOf = (m) => data.user(m.authorId) || { id: m.authorId, nickname: m.author?.nickname || '알 수 없음', provider: m.author?.provider || 'guest' };
-  const roomName = (id) => data.nodes.get(id)?.name;
+  const roomName = (id) => { const n = data.nodes.get(id); return n ? `${n.type === 'dm' ? '@' : '# '}${data.roomLabel(n)}` : ''; };
 
   function card(m, { highlight, actions, showRoom } = {}) {
     const u = authorOf(m);
@@ -65,7 +99,7 @@ export function createPanels(ctx) {
     const atts = Array.isArray(m.attachments) ? m.attachments.map((a) => (typeof a === 'string' ? a : a.name)) : [];
     return h('div', { class: 'mini-msg' },
       h('div', { class: 'mini-head' }, avatar(u, 24), h('strong', { class: 'ellipsis' }, u.nickname), badge(u.provider), h('span', { class: 'muted small' }, fmtStamp(m.createdAt))),
-      showRoom && roomName(m.roomId) ? h('div', { class: 'muted small' }, `# ${roomName(m.roomId)}`) : null,
+      showRoom && roomName(m.roomId) ? h('div', { class: 'muted small' }, roomName(m.roomId)) : null,
       m.kind === 'poll' ? h('div', { class: 'mini-text' }, `📊 ${m.content}`) : m.content ? h('div', { class: 'mini-text', html }) : null,
       atts.length ? h('div', { class: 'muted small' }, `📎 ${atts.join(', ')}`) : null,
       h('div', { class: 'mini-actions' },
@@ -80,7 +114,7 @@ export function createPanels(ctx) {
         actions || null));
   }
 
-  const loading = () => bodyEl.replaceChildren(h('div', { class: 'spinner' }));
+  const loading = () => bodyEl.replaceChildren(skeletonCards());
   const emptyBox = (ic, text, sub) => h('div', { class: 'empty small' }, icon(ic, 32), h('p', {}, text), sub ? h('p', { class: 'muted small' }, sub) : null);
 
   async function renderPins() {
@@ -111,7 +145,14 @@ export function createPanels(ctx) {
     const f = parseSearch(searchText, data);
     const any = f.q || f.from || f.has || f.before || f.after;
     if (!any) {
+      const scope = searchAll ? null : ctx.roomId;
+      const recent = searchHistory.get(scope);
       return results.replaceChildren(h('div', { class: 'pad muted small' },
+        recent.length ? h('div', { class: 'search-history' }, h('div', { class: 'row' }, h('strong', { class: 'grow' }, searchAll ? '최근 검색 (모든 방)' : '이 채팅방의 최근 검색'),
+          h('button', { class: 'link-btn small', type: 'button', onclick: () => { searchHistory.clear(scope); runSearch(); } }, '지우기')),
+        h('div', { class: 'chips' }, recent.map((q) => h('span', { class: 'chip history-chip' },
+          h('button', { type: 'button', class: 'chip-main', onclick: () => { const inp = bodyEl.querySelector('input[type=search]'); inp.value = q; searchText = q; runSearch(); } }, icon('history', 12), ` ${q}`),
+          h('button', { type: 'button', class: 'chip-x', 'aria-label': `${q} 기록 삭제`, onclick: () => { searchHistory.remove(scope, q); runSearch(); } }, '×'))))) : null,
         h('p', {}, '메시지 내용이나 파일 이름으로 검색합니다. 필터를 함께 쓸 수 있어요:'),
         h('div', { class: 'chips' }, ['from:', 'has:image', 'has:file', 'has:link', 'has:pin', 'has:poll', 'before:2026-01-01', 'after:2026-01-01', 'during:2026-01-01'].map((c) => h('button', {
           class: 'chip', type: 'button',
@@ -119,12 +160,14 @@ export function createPanels(ctx) {
         }, c)))));
     }
     if (f.from === '__none__') return results.replaceChildren(h('p', { class: 'muted small pad' }, `'${f.fromName}' 사용자를 찾을 수 없습니다.`));
-    results.replaceChildren(h('div', { class: 'spinner' }));
+    results.replaceChildren(skeletonCards(3));
     const all = searchAll || f.all;
     const myText = searchText;
     try {
       const list = await data.search({ roomId: all ? null : ctx.roomId, q: f.q, from: f.from, has: f.has, before: f.before, after: f.after });
       if (searchText !== myText) return;
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(() => { if (searchText === myText) searchHistory.add(all ? null : ctx.roomId, myText); }, 2000);
       results.replaceChildren(
         h('p', { class: 'muted small pad' }, list.length ? `검색 결과 ${list.length}개${list.length >= 50 ? '+' : ''}${all ? ' · 모든 채팅방' : ''}` : '검색 결과가 없습니다.'),
         ...list.filter((m) => !blocked.has(m.authorId)).map((m) => card(m, { highlight: f.q, showRoom: all })),
@@ -134,13 +177,14 @@ export function createPanels(ctx) {
     }
   }
 
+  let saveTimer = null;
   function renderSearch() {
     titleEl.replaceChildren(icon('search', 18), ' 검색');
     const runSoon = debounce(runSearch, 300);
     const input = h('input', {
       class: 'input', type: 'search', placeholder: '검색 (예: 회의 from:철수 has:file)', 'aria-label': '검색어', value: searchText,
       oninput: (e) => { searchText = e.target.value; runSoon(); },
-      onkeydown: (e) => { if (e.key === 'Enter') runSearch(); },
+      onkeydown: (e) => { if (e.key === 'Enter') { runSearch(); searchHistory.add(searchAll ? null : ctx.roomId, searchText); } },
     });
     const allToggle = h('label', { class: 'switch-row small' }, h('span', {}, '모든 채팅방에서 검색'),
       h('input', { type: 'checkbox', class: 'switch', checked: searchAll, onchange: (e) => { searchAll = e.target.checked; runSearch(); } }));
@@ -232,21 +276,7 @@ export function createPanels(ctx) {
   // ── 멤버 ──
   function renderMembers() {
     titleEl.replaceChildren(icon('users', 18), ' 멤버');
-    const users = [...data.users.values()].sort((a, b) => (a.nickname || '').localeCompare(b.nickname || '', 'ko'));
-    const pres = (u) => data.presenceOf(u.id);
-    const on = users.filter((u) => pres(u) !== 'offline');
-    const off = users.filter((u) => pres(u) === 'offline');
-    const row = (u) => h('button', { class: `member${pres(u) === 'offline' ? ' offline' : ''}`, onclick: () => profileDialog(ctx, u.id) },
-      avatar(u, 32, { presence: pres(u) }),
-      h('span', { class: 'member-meta' },
-        h('span', { class: 'member-name ellipsis' }, u.nickname, u.id === data.me.id ? h('span', { class: 'muted small' }, ' (나)') : null, blocked.has(u.id) ? ' 🚫' : ''),
-        u.status ? h('span', { class: 'member-status ellipsis' }, u.status) : pres(u) === 'idle' || pres(u) === 'dnd' ? h('span', { class: 'member-status' }, PRESENCE_LABEL[pres(u)]) : null),
-      badge(u.provider));
-    bodyEl.replaceChildren(...[
-      data.mode !== 'online' ? h('p', { class: 'muted small pad' }, '서버에 연결되어 있지 않아 접속 상태를 알 수 없습니다.') : null,
-      h('div', { class: 'member-group' }, `온라인 — ${on.length}`), ...on.map(row),
-      h('div', { class: 'member-group' }, `오프라인 — ${off.length}`), ...off.map(row),
-    ].filter(Boolean));
+    renderMemberList(ctx, bodyEl);
   }
 
   const RENDER = {

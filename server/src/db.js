@@ -43,13 +43,26 @@ async function ensureIndexes() {
     col('messages').createIndex({ roomId: 1, createdAt: -1 }),
     col('messages').createIndex({ roomId: 1, pinned: 1, pinnedAt: -1 }),
     col('nodes').createIndex({ parentId: 1, order: 1 }),
+    col('nodes').createIndex({ members: 1 }, { sparse: true }),
     files().createIndex({ 'metadata.expiresAt': 1 }),
+    files().createIndex({ 'metadata.uploaderId': 1, 'metadata.persistent': 1 }),
+    // 오류 보고는 30일 뒤 자동 삭제
+    col('errors').createIndex({ at: 1 }, { expireAfterSeconds: 30 * 86400 }),
   ]);
 }
 
+export const isMemory = () => config.mongoUri === 'memory';
+
 async function tryConnect() {
   try {
-    if (!client) {
+    if (!db && isMemory()) {
+      const { createMemoryDb } = await import('./memdb.js');
+      const m = createMemoryDb();
+      db = m.db;
+      bucket = m.bucket;
+      console.warn('[db] MONGODB_URI=memory — 메모리 DB 사용 (재시작하면 데이터가 사라집니다)');
+    }
+    if (!client && !isMemory()) {
       client = new MongoClient(config.mongoUri, { serverSelectionTimeoutMS: 5000 });
       await client.connect();
       db = client.db(config.dbName);
@@ -72,6 +85,7 @@ async function tryConnect() {
 /** 연결을 시작하고 10초마다 상태를 확인합니다. MongoDB가 내려가도 서버는 계속 동작하며, 클라이언트는 로컬 저장 모드로 전환됩니다. */
 export async function startDb() {
   await tryConnect();
+  if (isMemory()) return;
   pingTimer = setInterval(tryConnect, 10_000);
   pingTimer.unref?.();
 }

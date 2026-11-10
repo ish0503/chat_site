@@ -14,10 +14,10 @@ import {
 import { LANG_LABEL, runnable, langFromName } from '../runner.js';
 import { icon } from './icons.js';
 import {
-  avatar, badge, openMenu, openEmojiPicker, confirmDialog, QUICK_REACTIONS, emptyState,
+  avatar, badge, openMenu, openEmojiPicker, confirmDialog, QUICK_REACTIONS, emptyState, PRESENCE_LABEL,
 } from './common.js';
 import {
-  profileDialog, lightbox, settings, listSetting, editNodeDialog, editHistoryDialog, forwardDialog, pollDialog, filePreviewDialog, commandsDialog,
+  profileDialog, lightbox, settings, listSetting, editNodeDialog, editHistoryDialog, forwardDialog, pollDialog, filePreviewDialog, commandsDialog, storagePicker,
 } from './dialogs.js';
 import { errorText } from './errors.js';
 import { enhance } from './codeblock.js';
@@ -29,10 +29,18 @@ const COLLAPSE_LINES = 25;
 const TEXT_PREVIEW = /^(text\/|application\/(json|xml|javascript|x-sh|x-python|sql))/;
 const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
 
-export function createChatView(ctx) {
+/** 메시지 목록 로딩 중 스켈레톤 */
+export function skeletonList(n = 6) {
+  return h('div', { class: 'skeleton-list', 'aria-busy': 'true', 'aria-label': '불러오는 중' }, Array.from({ length: n }, (_, i) => h('div', { class: 'skeleton-msg' },
+    h('span', { class: 'sk sk-avatar' }), h('div', { class: 'sk-lines' }, h('span', { class: 'sk sk-name' }), h('span', { class: 'sk sk-line', style: { width: `${45 + ((i * 37) % 45)}%` } }), i % 2 ? h('span', { class: 'sk sk-line', style: { width: `${30 + ((i * 23) % 30)}%` } }) : null))));
+}
+
+/** split: 분할 화면의 두 번째 채팅창 (닫기 버튼 표시) */
+export function createChatView(ctx, { split = false } = {}) {
   const { data } = ctx;
   const st = {
-    roomId: null, messages: [], hasMore: false, loading: false, replyTo: null, editing: null, files: [], spoilers: new Set(), atBottom: true, newCount: 0, token: 0, since: 0, slowUntil: 0,
+    roomId: null, messages: [], hasMore: false, loading: false, replyTo: null, editing: null, files: [], stored: [], spoilers: new Set(), atBottom: true, newCount: 0, token: 0, since: 0, slowUntil: 0,
+    selecting: false, selected: new Set(), onlyAuthor: null, hidden: new Set(), backStack: [], unreadAtOpen: 0,
   };
   const els = new Map();
   const revealed = new Set(); // 차단한 사용자의 메시지 중 '보기'를 누른 것
@@ -41,11 +49,16 @@ export function createChatView(ctx) {
   // ───────── 헤더 ─────────
   const title = h('div', { class: 'room-title' });
   const pinBtn = h('button', { class: 'icon-btn', title: '고정된 메시지', 'aria-label': '고정된 메시지', onclick: () => ctx.togglePanel('pins') }, icon('pin'));
+  const splitBtn = h('button', {
+    class: 'icon-btn desktop-only split-btn', title: split ? '분할 화면 닫기' : '분할 화면으로 다른 방 열기', 'aria-label': split ? '분할 화면 닫기' : '분할 화면',
+    onclick: () => (split ? ctx.closeSplit() : ctx.pickSplit()),
+  }, icon(split ? 'x' : 'columns'));
   const header = h('header', { class: 'room-head' },
-    h('button', { class: 'icon-btn mobile-only', 'aria-label': '메뉴 열기', onclick: () => ctx.openDrawer() }, icon('menu')),
+    split ? null : h('button', { class: 'icon-btn mobile-only', 'aria-label': '메뉴 열기', onclick: () => ctx.openDrawer() }, icon('menu')),
     title,
     h('div', { class: 'room-actions' },
-      pinBtn,
+      splitBtn,
+      split ? null : pinBtn,
       h('button', { class: 'icon-btn', title: '검색', 'aria-label': '메시지 검색', onclick: () => ctx.togglePanel('search') }, icon('search')),
       h('button', { class: 'icon-btn desktop-only', title: '받은 멘션', 'aria-label': '받은 멘션', onclick: () => ctx.togglePanel('mentions') }, icon('at')),
       h('button', { class: 'icon-btn desktop-only', title: '미디어·파일·링크', 'aria-label': '미디어·파일·링크', onclick: () => ctx.togglePanel('media') }, icon('grid')),
@@ -58,6 +71,13 @@ export function createChatView(ctx) {
   const topLoader = h('div', { class: 'list-top' });
   const scroller = h('div', { class: 'msg-scroller', tabindex: '-1' }, topLoader, list, h('div', { class: 'list-bottom-pad' }));
   const jumpBtn = h('button', { class: 'jump-latest', hidden: true, onclick: () => scrollToBottom(true) }, icon('arrowDown', 16), h('span', {}, '최신 메시지로'));
+  // 답장 탐색: 원본으로 이동한 뒤 '돌아가기'로 원래 보던 답장으로
+  const backBtn = h('button', { class: 'jump-back', hidden: true, onclick: () => goBack() }, icon('reply', 16), h('span', {}, '답장으로 돌아가기'));
+  // 읽지 않은 메시지 위치: 방을 열었을 때 안 읽은 메시지가 있으면 위쪽에 안내
+  const unreadBar = h('div', { class: 'unread-bar', hidden: true, role: 'status' });
+  // 사용자별 메시지 필터 · 여러 개 선택 막대
+  const filterBar = h('div', { class: 'filter-bar', hidden: true });
+  const selectBar = h('div', { class: 'select-bar', hidden: true, role: 'toolbar', 'aria-label': '선택한 메시지' });
   const typingEl = h('div', { class: 'typing', 'aria-live': 'polite' });
 
   // ───────── 입력창 ─────────
@@ -81,8 +101,10 @@ export function createChatView(ctx) {
   const composer = h('div', { class: 'composer' }, suggestBox, slowBar, bar, tray, box, counter, fileInput, cameraInput, typingEl);
 
   const dropOverlay = h('div', { class: 'drop-overlay', hidden: true }, h('div', {}, icon('clip', 40), h('p', {}, '여기에 놓아 파일 첨부')));
-  const body = h('div', { class: 'chat-body' }, scroller, jumpBtn);
-  const el = h('section', { class: 'chat-view', 'aria-label': '채팅' }, header, body, composer, dropOverlay);
+  const body = h('div', { class: 'chat-body' }, unreadBar, filterBar, scroller, backBtn, jumpBtn);
+  const el = h('section', { class: `chat-view${split ? ' split-pane' : ''}`, 'aria-label': split ? '분할 화면 채팅' : '채팅' }, header, body, selectBar, composer, dropOverlay);
+  if (split) el.addEventListener('focusin', () => ctx.emit('focusPane', 'split'));
+  el.addEventListener('keydown', (e) => { if (e.key === 'Escape' && st.selecting) { e.preventDefault(); stopSelect(); } });
 
   // ───────── 렌더링 ─────────
   const authorOf = (m) => data.user(m.authorId) || { id: m.authorId, nickname: m.author?.nickname || '알 수 없음', provider: m.author?.provider || 'guest' };
@@ -96,6 +118,16 @@ export function createChatView(ctx) {
   function renderTitle() {
     const room = data.nodes.get(st.roomId);
     if (!room) return;
+    if (room.type === 'dm') {
+      const u = data.dmPartner(room);
+      const pres = data.presenceOf(u.id);
+      title.replaceChildren(avatar(u, 26, { presence: pres }),
+        h('div', { class: 'room-title-text' }, h('h2', { class: 'ellipsis' }, u.nickname),
+          h('span', { class: 'room-topic ellipsis' }, [u.status, pres !== 'offline' ? PRESENCE_LABEL[pres] : '1:1 대화'].filter(Boolean).join(' · '))));
+      title.onclick = () => profileDialog(ctx, u.id);
+      title.classList.add('clickable');
+      return;
+    }
     const path = [];
     for (let p = data.nodes.get(room.parentId); p; p = data.nodes.get(p.parentId)) path.unshift(p.name);
     const tags = [room.readonly ? '📢 공지' : null, room.slowmode ? `🐢 ${room.slowmode}초` : null].filter(Boolean).join(' · ');
@@ -179,7 +211,7 @@ export function createChatView(ctx) {
     const cls = ['msg', cont && 'cont', mine && 'mine', mention && 'mention', m.pending && data.mode !== 'local' && 'pending', m.failed && 'failed', m.pinned && 'pinned', m.kind === 'me' && 'action'].filter(Boolean).join(' ');
 
     const openProfile = (e) => { e.stopPropagation(); profileDialog(ctx, m.authorId); };
-    const reply = m.replyPreview ? h('button', { class: 'msg-reply', onclick: () => jumpTo(m.replyTo) },
+    const reply = m.replyPreview ? h('button', { class: 'msg-reply', onclick: () => jumpTo(m.replyTo, { from: m.id }) },
       icon('reply', 14, 'dim'),
       avatar(data.user(m.replyPreview.authorId) || { id: m.replyPreview.authorId, nickname: m.replyPreview.author?.nickname }, 16),
       h('strong', {}, (data.user(m.replyPreview.authorId) || m.replyPreview.author)?.nickname || '알 수 없음'),
@@ -244,7 +276,12 @@ export function createChatView(ctx) {
         ? h('div', { class: `msg-status${data.isOnline ? ' late' : ''}` }, icon('clock', 13), data.isOnline ? ' 보내는 중…' : ' 기기에 저장됨 · 연결되면 전송')
         : null;
 
-    const main = h('div', { class: 'msg-main' }, fwd, text, atts, renderEmbeds(m), reactEl, status);
+    const replies = replyMap().get(m.id) || [];
+    const repliesEl = replies.length ? h('button', {
+      class: 'replies-btn', title: '이 메시지에 달린 답장 보기',
+      onclick: (e) => openReplies(m, replies, e.currentTarget),
+    }, icon('reply', 13), ` 답장 ${replies.length}개`) : null;
+    const main = h('div', { class: 'msg-main' }, fwd, text, atts, renderEmbeds(m), reactEl, repliesEl, status);
     const actions = isTouch() ? null : h('div', { class: 'msg-actions', role: 'toolbar' },
       data.can('react') ? QUICK_REACTIONS.slice(0, 3).map((emo) => h('button', { class: 'icon-btn tiny emoji', title: emo, onclick: () => react(m, emo) }, emo)) : null,
       data.can('react') ? h('button', { class: 'icon-btn tiny', title: '반응 추가', onclick: (e) => openEmojiPicker(e.currentTarget, (emo) => react(m, emo)) }, icon('smilePlus', 18)) : null,
@@ -252,16 +289,211 @@ export function createChatView(ctx) {
       mine && sentOk && m.kind !== 'poll' ? h('button', { class: 'icon-btn tiny', title: '수정', onclick: () => startEdit(m) }, icon('edit', 18)) : null,
       h('button', { class: 'icon-btn tiny', title: '더보기', onclick: (e) => messageMenu(m, e.currentTarget) }, icon('more', 18)));
 
+    const extra = [st.selected.has(m.id) && 'selected', st.onlyAuthor && st.onlyAuthor !== m.authorId && 'filtered-out', st.hidden.has(m.id) && 'filtered-out'].filter(Boolean).join(' ');
     const node = h('div', {
-      class: cls, dataset: { id: m.id }, id: `m-${m.id}`, role: 'article',
+      class: extra ? `${cls} ${extra}` : cls, dataset: { id: m.id, author: m.authorId }, id: `m-${m.id}`, role: 'article',
+      'aria-selected': st.selecting ? String(st.selected.has(m.id)) : null,
       oncontextmenu: (e) => {
+        if (st.selecting) { e.preventDefault(); return; }
         if (e.target.closest('a, video, audio, .run-box, pre')) return;
         e.preventDefault();
         messageMenu(m, e);
       },
-    }, reply, head, gutter, main, actions);
-    attachLongPress(node, () => messageMenu(m, null));
+      onclick: (e) => {
+        if (!st.selecting || e.target.closest('a, video, audio, .run-box, .spoiler-cover, .poll-opt')) return;
+        e.preventDefault();
+        toggleSelect(m.id);
+      },
+    }, reply, head, gutter, main, st.selecting ? null : actions);
+    attachLongPress(node, () => (st.selecting ? toggleSelect(m.id) : messageMenu(m, null)));
+    attachSwipeReply(node, m);
     return node;
+  }
+
+  // ───────── 답장 탐색 ─────────
+  let replyCache = null;
+  function replyMap() {
+    if (replyCache) return replyCache;
+    replyCache = new Map();
+    for (const x of st.messages) if (x.replyTo) { if (!replyCache.has(x.replyTo)) replyCache.set(x.replyTo, []); replyCache.get(x.replyTo).push(x); }
+    return replyCache;
+  }
+  const invalidateReplies = () => { replyCache = null; };
+
+  function openReplies(m, replies, anchor) {
+    if (replies.length === 1) return jumpTo(replies[0].id, { from: m.id });
+    openMenu(anchor, replies.slice(-15).map((r) => ({
+      label: `${authorOf(r).nickname}: ${(r.content || '📎 첨부파일').slice(0, 40)}`, icon: 'reply', onClick: () => jumpTo(r.id, { from: m.id }),
+    })));
+  }
+
+  function goBack() {
+    const id = st.backStack.pop();
+    updateBack();
+    if (id) jumpTo(id, { noHistory: true });
+  }
+  function updateBack() {
+    backBtn.hidden = !st.backStack.length;
+  }
+
+  // ───────── 모바일: 메시지를 왼쪽으로 밀어서 답장 ─────────
+  function attachSwipeReply(node, m) {
+    if (!isTouch()) return;
+    let sx = 0; let sy = 0; let dx = 0; let active = false;
+    node.addEventListener('touchstart', (e) => {
+      if (st.selecting || e.target.closest('pre, .run-box, .md-table-wrap, video, audio')) return;
+      sx = e.touches[0].clientX; sy = e.touches[0].clientY; dx = 0; active = true;
+    }, { passive: true });
+    node.addEventListener('touchmove', (e) => {
+      if (!active) return;
+      const x = e.touches[0].clientX - sx;
+      const y = e.touches[0].clientY - sy;
+      if (Math.abs(y) > 30 && Math.abs(y) > Math.abs(x)) { active = false; node.style.transform = ''; return; }
+      dx = Math.min(0, Math.max(-90, x));
+      if (dx < -10) node.style.transform = `translateX(${dx}px)`;
+      node.classList.toggle('swipe-ready', dx <= -60);
+    }, { passive: true });
+    const end = () => {
+      if (!active) return;
+      active = false;
+      node.style.transform = '';
+      node.classList.remove('swipe-ready');
+      if (dx <= -60 && data.can('sendMessage') && !m.failed) { navigator.vibrate?.(10); startReply(m); }
+    };
+    node.addEventListener('touchend', end);
+    node.addEventListener('touchcancel', end);
+  }
+
+  // ───────── 여러 개 선택 (일괄 관리) ─────────
+  function startSelect(firstId) {
+    st.selecting = true;
+    st.selected = new Set(firstId ? [firstId] : []);
+    el.classList.add('selecting');
+    renderAll({ preserve: true });
+    renderSelectBar();
+  }
+  function stopSelect() {
+    st.selecting = false;
+    st.selected.clear();
+    el.classList.remove('selecting');
+    renderAll({ preserve: true });
+    renderSelectBar();
+  }
+  function toggleSelect(id) {
+    if (st.selected.has(id)) st.selected.delete(id); else st.selected.add(id);
+    const node = els.get(id);
+    node?.classList.toggle('selected', st.selected.has(id));
+    node?.setAttribute('aria-selected', String(st.selected.has(id)));
+    renderSelectBar();
+  }
+  function renderSelectBar() {
+    selectBar.hidden = !st.selecting;
+    composer.hidden = st.selecting;
+    if (!st.selecting) return selectBar.replaceChildren();
+    const chosen = st.messages.filter((m) => st.selected.has(m.id));
+    const room = data.nodes.get(st.roomId);
+    const deletable = chosen.filter((m) => m.authorId === data.me.id || (room?.type !== 'dm' && data.can('deleteAnyMessage')));
+    const btn = (ic, label, fn, opts = {}) => h('button', { class: `btn small ${opts.danger ? 'danger' : 'secondary'}`, type: 'button', disabled: !chosen.length || opts.disabled, onclick: fn }, icon(ic, 15), ` ${label}`);
+    selectBar.replaceChildren(
+      h('strong', {}, `${chosen.length}개 선택`),
+      h('button', { class: 'link-btn small', type: 'button', onclick: () => { st.selected = new Set(st.messages.filter((m) => !(st.onlyAuthor && m.authorId !== st.onlyAuthor)).map((m) => m.id)); renderAll({ preserve: true }); renderSelectBar(); } }, '모두 선택'),
+      h('span', { class: 'grow' }),
+      btn('copy', '복사', () => {
+        const text = chosen.map((m) => `[${fmtFull(m.createdAt)}] ${authorOf(m).nickname}: ${m.content || (m.attachments || []).map((a) => `📎 ${a.name}`).join(' ')}`).join('\n');
+        navigator.clipboard?.writeText(text).then(() => toast(`${chosen.length}개 메시지를 복사했습니다.`), () => toast('복사하지 못했습니다.', 'error'));
+      }),
+      btn('bookmark', '저장', () => {
+        let n = 0;
+        for (const m of chosen) if (!bookmarks.has(m.id)) { bookmarks.toggle(m); n += 1; }
+        toast(`${n}개 메시지를 저장했습니다.`);
+        stopSelect();
+      }),
+      btn('trash', deletable.length !== chosen.length ? `삭제 (${deletable.length})` : '삭제', () => removeMany(deletable), { danger: true, disabled: !deletable.length }),
+      h('button', { class: 'btn small ghost', type: 'button', onclick: stopSelect }, '취소'),
+    );
+  }
+
+  // ───────── 삭제 (실행 취소 가능) ─────────
+  // 삭제를 누르면 바로 숨기고 5초 동안 '실행 취소'를 보여 준 뒤 실제로 삭제 → 실수로 지운 메시지 복구
+  const pendingDeletes = new Map(); // timer key → {ids, timer}
+  function scheduleDelete(list) {
+    const ids = list.map((m) => m.id);
+    for (const id of ids) st.hidden.add(id);
+    renderAll({ preserve: true });
+    const key = ids.join(',');
+    const commit = async () => {
+      pendingDeletes.delete(key);
+      try {
+        if (ids.length === 1) await data.deleteMessage(ids[0]);
+        else await data.deleteMessages(ids);
+      } catch (e) {
+        toast(errorText(e), 'error');
+      }
+      for (const id of ids) st.hidden.delete(id);
+      renderAll({ preserve: true });
+    };
+    const timer = setTimeout(commit, 5000);
+    pendingDeletes.set(key, { timer, commit });
+    toast(ids.length === 1 ? '메시지를 삭제했습니다.' : `메시지 ${ids.length}개를 삭제했습니다.`, 'info', 5000, {
+      label: '실행 취소',
+      onClick: () => {
+        clearTimeout(timer);
+        pendingDeletes.delete(key);
+        for (const id of ids) st.hidden.delete(id);
+        renderAll({ preserve: true });
+      },
+    });
+  }
+  // 창을 닫기 전에 대기 중인 삭제를 바로 처리
+  window.addEventListener('pagehide', () => { for (const { timer, commit } of pendingDeletes.values()) { clearTimeout(timer); commit(); } });
+
+  async function removeMany(list) {
+    if (!list.length) return;
+    const ok = await confirmDialog({ title: '메시지 삭제', message: `선택한 메시지 ${list.length}개를 삭제할까요? 첨부파일도 함께 삭제됩니다.\n5초 안에 실행 취소할 수 있습니다.`, confirmText: '삭제', danger: true });
+    if (!ok) return;
+    stopSelect();
+    scheduleDelete(list);
+  }
+
+  // ───────── 사용자별 메시지 필터 ─────────
+  function setAuthorFilter(userId) {
+    st.onlyAuthor = userId;
+    renderFilterBar();
+    renderAll({ preserve: !userId });
+    if (userId) scrollToBottom();
+  }
+  function renderFilterBar() {
+    filterBar.hidden = !st.onlyAuthor;
+    if (!st.onlyAuthor) return filterBar.replaceChildren();
+    const u = data.user(st.onlyAuthor) || { id: st.onlyAuthor, nickname: '?' };
+    const n = st.messages.filter((m) => m.authorId === st.onlyAuthor).length;
+    filterBar.replaceChildren(icon('user', 14), avatar(u, 18), h('span', {}, h('strong', {}, u.nickname), `님의 메시지만 보는 중 (불러온 ${n}개)`),
+      h('button', { class: 'link-btn small', onclick: () => { ctx.searchFrom(u); } }, '전체 기록 검색'),
+      h('button', { class: 'icon-btn tiny', 'aria-label': '필터 해제', onclick: () => setAuthorFilter(null) }, icon('x', 14)));
+  }
+
+  // ───────── 읽지 않은 메시지 위치 ─────────
+  function renderUnreadBar() {
+    const firstUnread = st.since ? st.messages.find((m) => m.createdAt > st.since && m.authorId !== data.me.id) : null;
+    const count = st.since ? st.messages.filter((m) => m.createdAt > st.since && m.authorId !== data.me.id).length : 0;
+    const divider = list.querySelector('.new-divider');
+    const visible = divider && divider.getBoundingClientRect().bottom > scroller.getBoundingClientRect().top && divider.getBoundingClientRect().top < scroller.getBoundingClientRect().bottom;
+    if (!st.since || (!firstUnread && !st.hasMore) || visible || st.unreadDismissed) { unreadBar.hidden = true; return; }
+    unreadBar.hidden = false;
+    const more = st.hasMore && (!st.messages.length || st.messages[0].createdAt > st.since);
+    unreadBar.replaceChildren(
+      h('button', { class: 'unread-jump', onclick: () => jumpToUnread() }, icon('arrowDown', 14, 'up'), h('span', {}, `새 메시지 ${count}${more ? '+' : ''}개 · ${fmtStamp(st.since)} 이후`), h('strong', {}, '처음 읽지 않은 곳으로')),
+      h('button', { class: 'unread-dismiss', onclick: () => { st.unreadDismissed = true; unreadBar.hidden = true; ctx.markRead(st.roomId); } }, '읽음으로 표시'),
+    );
+  }
+  async function jumpToUnread() {
+    for (let i = 0; i < 40 && st.hasMore && st.messages[0]?.createdAt > st.since; i++) {
+      if (!(await loadOlder())) break;
+    }
+    const target = list.querySelector('.new-divider') || els.get(st.messages.find((m) => m.createdAt > st.since)?.id);
+    target?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    st.unreadDismissed = true;
+    unreadBar.hidden = true;
   }
 
   const escapeName = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -294,6 +526,7 @@ export function createChatView(ctx) {
     node.addEventListener('touchcancel', cancel);
   }
 
+  const canDeleteOthers = () => data.nodes.get(st.roomId)?.type !== 'dm' && data.can('deleteAnyMessage');
   const messageLink = (m) => `${location.origin}${location.pathname}#/room/${m.roomId}/m/${m.id}`;
 
   function speak(m) {
@@ -314,6 +547,7 @@ export function createChatView(ctx) {
       h('button', { class: 'emoji-btn big', title: '더보기', onclick: (e) => { closeAll(); openEmojiPicker(anchor || e.currentTarget, (emo) => react(m, emo)); } }, icon('smilePlus', 20))) : null;
     const items = [
       sent && data.can('sendMessage') ? { label: '답장', icon: 'reply', onClick: () => startReply(m) } : null,
+      replyMap().get(m.id)?.length ? { label: `답장 보기 (${replyMap().get(m.id).length})`, icon: 'reply', onClick: () => openReplies(m, replyMap().get(m.id), anchor || els.get(m.id)) } : null,
       sent && data.can('sendMessage') ? { label: '전달', icon: 'forward', onClick: () => forwardDialog(ctx, m) } : null,
       sent && data.can('pin') ? { label: m.pinned ? '고정 해제' : '메시지 고정', icon: 'pin', onClick: () => pin(m) } : null,
       { label: saved ? '저장 취소' : '메시지 저장 (북마크)', icon: 'bookmark', onClick: () => { const on = bookmarks.toggle(m); toast(on ? '저장했습니다. 🔖 저장한 메시지에서 볼 수 있어요.' : '저장을 취소했습니다.'); rerender(m); } },
@@ -325,8 +559,10 @@ export function createChatView(ctx) {
       m.content ? { label: '읽어주기', icon: 'speaker', onClick: () => speak(m) } : null,
       m.failed ? { label: '다시 보내기', icon: 'refresh', onClick: () => data.retryMessage(m.id) } : null,
       { label: '작성자 프로필', icon: 'user', onClick: () => profileDialog(ctx, m.authorId) },
-      mine || data.can('deleteAnyMessage') ? 'sep' : null,
-      mine || data.can('deleteAnyMessage') ? { label: '삭제', icon: 'trash', danger: true, onClick: () => remove(m) } : null,
+      { label: st.onlyAuthor === m.authorId ? '필터 해제 (모든 메시지 보기)' : '이 사람의 메시지만 보기', icon: 'user', onClick: () => setAuthorFilter(st.onlyAuthor === m.authorId ? null : m.authorId) },
+      { label: '여러 개 선택', icon: 'check', onClick: () => startSelect(m.id) },
+      mine || canDeleteOthers() ? 'sep' : null,
+      mine || canDeleteOthers() ? { label: '삭제', icon: 'trash', danger: true, onClick: () => remove(m) } : null,
     ];
     const menu = openMenu(anchor || els.get(m.id) || el, items, { header });
     function closeAll() { menu.close(); }
@@ -346,9 +582,21 @@ export function createChatView(ctx) {
     const meta = (onDevice) => h('div', { class: 'att-meta' },
       h('span', { class: 'ellipsis', title: att.name }, att.name),
       h('span', { class: 'muted' }, fmtBytes(att.size)),
-      m.pending ? null : h('span', { class: `expiry${expired ? ' expired' : ''}`, title: att.expiresAt ? `다운로드 가능 기한: ${fmtFull(att.expiresAt)}` : '' },
+      m.pending ? null : !att.expiresAt ? h('span', { class: 'expiry kept', title: '내 보관함 파일 · 만료 없음' }, icon('archive', 12), ' 보관함') : h('span', { class: `expiry${expired ? ' expired' : ''}`, title: att.expiresAt ? `다운로드 가능 기한: ${fmtFull(att.expiresAt)}` : '' },
         expired ? icon('lock', 12) : icon('clock', 12), expired ? (onDevice ? ' 만료 · 기기 사본 보기 전용' : ' 만료됨') : ` ${fmtRemain(att.expiresAt - Date.now())}`),
+      keepBtn(),
       !expired ? h('button', { class: 'icon-btn tiny', title: '다운로드', 'aria-label': `${att.name} 다운로드`, onclick: () => download(att) }, icon('download', 16)) : null);
+    // 만료되기 전에 내 보관함으로 복사 (만료 없이 계속 보관)
+    function keepBtn(big = false) {
+      if (expired || m.pending || !att.expiresAt || !data.can('storage') || !data.isOnline) return null;
+      return h('button', {
+        class: big ? 'icon-btn' : 'icon-btn tiny', title: '내 보관함에 저장 (만료 없이 보관)', 'aria-label': `${att.name} 보관함에 저장`,
+        onclick: async (e) => {
+          e.currentTarget.disabled = true;
+          try { await data.keepFile(att); toast('내 보관함에 저장했습니다. 만료되지 않아요.', 'success'); } catch (er) { toast(errorText(er), 'error'); e.currentTarget.disabled = false; }
+        },
+      }, icon('archive', big ? 20 : 16));
+    }
 
     const isMedia = att.kind === 'image' || att.kind === 'video' || att.kind === 'audio';
     const emoji = { image: '🖼️', video: '🎞️', audio: '🎵', file: '' }[att.kind] || '';
@@ -360,10 +608,12 @@ export function createChatView(ctx) {
           onDevice ? ' · 기기에 저장됨' : '',
           expired ? (onDevice ? ' · 만료되어 다시 내려받을 수 없음' : ' · 만료되어 볼 수 없음') : '',
           !expired && !onDevice && !data.isOnline ? ' · 서버에 연결되면 받을 수 있음' : '',
-          !expired && !m.pending ? ` · ⏳ ${fmtRemain(att.expiresAt - Date.now())}` : '')),
+          !expired && !m.pending && att.expiresAt ? ` · ⏳ ${fmtRemain(att.expiresAt - Date.now())}` : '',
+          !att.expiresAt && !m.pending ? ' · 🗄 보관함 파일' : '')),
       previewable && (onDevice || !expired) && !(expired && att.mime === 'application/pdf')
         ? h('button', { class: 'btn small secondary', title: '미리보기', onclick: () => filePreviewDialog(ctx, att, { onSendResult: sendResult(m) }) }, runnable(langFromName(att.name)) ? '보기 · 실행' : '미리보기')
         : null,
+      keepBtn(true),
       !expired
         ? h('button', { class: 'icon-btn', title: '다운로드', 'aria-label': `${att.name} 다운로드`, onclick: () => download(att) }, icon('download'))
         : h('span', { class: 'dim', title: '유효기간 만료' }, icon('lock', 18)));
@@ -440,6 +690,7 @@ export function createChatView(ctx) {
   function renderAll({ preserve } = {}) {
     const oldH = scroller.scrollHeight;
     const oldTop = scroller.scrollTop;
+    invalidateReplies();
     els.clear();
     const frag = document.createDocumentFragment();
     let prev = null;
@@ -456,10 +707,16 @@ export function createChatView(ctx) {
     if (!st.messages.length) frag.append(roomIntro(true));
     list.replaceChildren(frag);
     if (preserve) scroller.scrollTop = oldTop + (scroller.scrollHeight - oldH);
+    if (st.onlyAuthor) renderFilterBar();
   }
 
   function roomIntro(empty = false) {
     const room = data.nodes.get(st.roomId);
+    if (room?.type === 'dm') {
+      const u = data.dmPartner(room);
+      return h('div', { class: 'room-intro' }, h('div', { class: 'intro-icon' }, avatar(u, 64)), h('h2', {}, u.nickname),
+        h('p', { class: 'muted' }, empty ? `${u.nickname}님과의 1:1 대화를 시작해 보세요. 두 사람만 볼 수 있습니다.` : `${u.nickname}님과의 1:1 대화의 시작입니다.`));
+    }
     return h('div', { class: 'room-intro' },
       h('div', { class: 'intro-icon' }, room?.emoji ? h('span', { class: 'intro-emoji' }, room.emoji) : icon('hash', 36)),
       h('h2', {}, `#${room?.name || ''}에 오신 것을 환영합니다!`),
@@ -469,6 +726,7 @@ export function createChatView(ctx) {
 
   function upsert(m, { isNew }) {
     if (m.roomId !== st.roomId) return;
+    if (m.replyTo && isNew) { invalidateReplies(); const target = st.messages.find((x) => x.id === m.replyTo); if (target) setTimeout(() => rerender(target)); }
     const i = st.messages.findIndex((x) => x.id === m.id);
     if (i >= 0) {
       st.messages[i] = m;
@@ -502,13 +760,16 @@ export function createChatView(ctx) {
     const i = st.messages.findIndex((x) => x.id === id);
     if (i < 0) return;
     st.messages.splice(i, 1);
+    st.selected.delete(id);
+    if (st.selecting) renderSelectBar();
     renderAll({ preserve: true });
   }
 
   data.on('message', (m, info) => upsert(m, info || {}));
   data.on('messageRemoved', removeMsg);
-  data.on('users', debounce(() => { if (st.roomId) renderAll({ preserve: true }); }, 300));
+  data.on('users', debounce(() => { if (st.roomId) { renderTitle(); renderAll({ preserve: true }); } }, 300));
   data.on('nodes', () => { if (st.roomId) { renderTitle(); renderComposerState(); } });
+  data.on('presence', () => { if (data.nodes.get(st.roomId)?.type === 'dm') renderTitle(); });
   data.on('resync', () => { if (st.roomId) reload(); });
   data.on('status', () => renderComposerState());
   ctx.on('rerender', () => { if (st.roomId) renderAll({ preserve: true }); });
@@ -537,7 +798,9 @@ export function createChatView(ctx) {
     jumpBtn.classList.toggle('has-new', st.newCount > 0);
   }
 
+  const unreadSoon = throttle(() => { if (!unreadBar.hidden) renderUnreadBar(); }, 200);
   scroller.addEventListener('scroll', () => {
+    unreadSoon();
     const b = nearBottom();
     if (b !== st.atBottom) {
       st.atBottom = b;
@@ -571,13 +834,15 @@ export function createChatView(ctx) {
     }
   }
 
-  async function jumpTo(id) {
+  async function jumpTo(id, { from, noHistory } = {}) {
     if (!id) return;
     for (let i = 0; i < 40 && !els.has(id); i++) {
       if (!(await loadOlder())) break;
     }
     const node = els.get(id);
     if (!node) return toast('원본 메시지를 찾을 수 없습니다.', 'warn');
+    if (node.classList.contains('filtered-out') && st.onlyAuthor) setAuthorFilter(null);
+    if (from && !noHistory) { st.backStack.push(from); st.backStack = st.backStack.slice(-20); updateBack(); }
     node.scrollIntoView({ block: 'center', behavior: 'smooth' });
     node.classList.remove('flash');
     void node.offsetWidth;
@@ -594,6 +859,7 @@ export function createChatView(ctx) {
       st.hasMore = res.hasMore;
       renderAll();
       scrollToBottom();
+      requestAnimationFrame(() => requestAnimationFrame(renderUnreadBar));
     } catch (e) {
       toast(errorText(e), 'error');
     }
@@ -626,10 +892,9 @@ export function createChatView(ctx) {
     }
   }
 
-  async function remove(m) {
-    const ok = await confirmDialog({ title: '메시지 삭제', message: '이 메시지를 삭제할까요? 첨부파일도 함께 삭제됩니다.', confirmText: '삭제', danger: true });
-    if (!ok) return;
-    try { await data.deleteMessage(m.id); } catch (e) { toast(errorText(e), 'error'); }
+  function remove(m) {
+    if (m.pending || m.failed) { data.deleteMessage(m.id).catch((e) => toast(errorText(e), 'error')); return; }
+    scheduleDelete([m]);
   }
 
   function startReply(m) {
@@ -693,8 +958,11 @@ export function createChatView(ctx) {
   }
 
   function renderTray() {
-    tray.hidden = !st.files.length;
-    tray.replaceChildren(...st.files.map((f, i) => {
+    tray.hidden = !st.files.length && !st.stored.length;
+    tray.replaceChildren(...st.stored.map((f, i) => h('div', { class: 'tray-item stored', title: `${f.name} (내 보관함)` },
+      h('div', { class: 'tray-thumb' }, icon('archive', 26)), h('span', { class: 'tray-name ellipsis' }, f.name), h('span', { class: 'muted small' }, `🗄 ${fmtBytes(f.size)}`),
+      h('button', { class: 'tray-remove', 'aria-label': `${f.name} 제거`, onclick: () => { st.stored.splice(i, 1); renderTray(); } }, icon('x', 14)))));
+    tray.append(...st.files.map((f, i) => {
       const thumb = f.type.startsWith('image/') ? h('img', { src: URL.createObjectURL(f), alt: '' }) : icon(f.type.startsWith('video/') ? 'video' : f.type.startsWith('audio/') ? 'mic' : 'file', 26);
       const spoiler = st.spoilers.has(f);
       return h('div', { class: `tray-item${spoiler ? ' spoiler' : ''}`, title: f.name }, h('div', { class: 'tray-thumb' }, thumb),
@@ -731,6 +999,7 @@ export function createChatView(ctx) {
 
   function clearComposer() {
     st.files = [];
+    st.stored = [];
     st.spoilers = new Set();
     st.replyTo = null;
     ta.value = '';
@@ -756,12 +1025,14 @@ export function createChatView(ctx) {
       }
       return;
     }
-    if (!text.trim() && !st.files.length) return;
+    if (!text.trim() && !st.files.length && !st.stored.length) return;
     if (text.length > 4000) return toast('메시지는 4000자까지 보낼 수 있습니다.', 'warn');
     if (st.slowUntil > Date.now()) return toast(`슬로우 모드: ${Math.ceil((st.slowUntil - Date.now()) / 1000)}초 후에 보낼 수 있어요.`, 'warn');
 
     // 슬래시 명령어
-    let payload = { content: replaceShortcodes(text), files: st.files, replyTo: st.replyTo || null, spoilers: st.files.map((f, i) => (st.spoilers.has(f) ? i : -1)).filter((i) => i >= 0) };
+    let payload = {
+      content: replaceShortcodes(text), files: st.files, stored: st.stored, replyTo: st.replyTo || null, spoilers: st.files.map((f, i) => (st.spoilers.has(f) ? i : -1)).filter((i) => i >= 0),
+    };
     if (text.trim().startsWith('/') && !st.files.length) {
       const r = runCommand(text.trim());
       if (r?.error) return toast(r.error, 'warn');
@@ -779,6 +1050,29 @@ export function createChatView(ctx) {
         clearComposer();
         if (!data.can('manageNodes')) return toast(errorText({ code: 'forbidden' }), 'warn');
         return data.updateNode(st.roomId, { topic: r.topic }).then(() => toast('채팅방 설명을 바꿨습니다.', 'success'), (e) => toast(errorText(e), 'error'));
+      }
+      if (r?.dm) {
+        const name = r.dm.name.toLowerCase();
+        const u = [...data.users.values()].find((x) => x.id !== data.me.id && x.nickname?.toLowerCase() === name) || [...data.users.values()].find((x) => x.id !== data.me.id && x.nickname?.toLowerCase().includes(name));
+        if (!u) return toast(`'${r.dm.name}' 사용자를 찾을 수 없습니다.`, 'warn');
+        clearComposer();
+        try {
+          const n = await data.openDm(u.id);
+          if (r.dm.text) await data.sendMessage(n.id, { content: replaceShortcodes(r.dm.text) });
+          ctx.openRoom(n.id);
+        } catch (e) { toast(errorText(e), 'error'); }
+        return;
+      }
+      if (r?.ai) {
+        if (!data.aiEnabled) return toast(errorText({ code: data.can('useAi') ? 'ai_disabled' : 'forbidden' }), 'warn');
+        clearComposer();
+        toast('🤖 AI가 대화를 읽고 있어요…', 'info', 2500);
+        try {
+          const res = await data.askAi(st.roomId, r.ai);
+          const label = r.ai.mode === 'summary' ? '요약' : `답변: ${r.ai.question.slice(0, 100)}`;
+          await data.sendMessage(st.roomId, { content: `🤖 **AI ${label}**\n${res.text}`.slice(0, 4000) });
+        } catch (e) { toast(errorText(e), 'error'); }
+        return;
       }
       if (r?.send) {
         if (r.send.kind === 'poll' && !data.can('react')) return toast('게스트는 투표를 만들 수 없습니다.', 'warn');
@@ -825,11 +1119,15 @@ export function createChatView(ctx) {
   function plusMenu(anchor) {
     openMenu(anchor, [
       { label: '파일 올리기', icon: 'clip', onClick: () => fileInput.click() },
+      data.can('storage') && data.isOnline ? {
+        label: '내 보관함에서 첨부', icon: 'archive', onClick: () => storagePicker(ctx, (picked) => { st.stored.push(...picked.filter((f) => !st.stored.some((x) => x.id === f.id))); renderTray(); }),
+      } : null,
       isTouch() ? { label: '사진·동영상 찍기', icon: 'camera', onClick: () => cameraInput.click() } : null,
       window.MediaRecorder ? { label: '음성 메시지 녹음', icon: 'mic', onClick: () => recordVoice() } : null,
       data.can('react') ? { label: '투표 만들기', icon: 'poll', onClick: () => pollDialog(ctx, st.roomId) } : null,
       navigator.geolocation ? { label: '내 위치 보내기', icon: 'pinMap', onClick: () => shareLocation() } : null,
       { label: '코드 블록 넣기', icon: 'code', onClick: () => { insertText('```js\n\n```'); ta.setSelectionRange(ta.selectionStart - 4, ta.selectionStart - 4); } },
+      data.aiEnabled ? { label: 'AI 도우미', icon: 'sparkle', onClick: () => ctx.aiDialog(st.roomId) } : null,
       'sep',
       { label: '명령어 보기', icon: 'info', onClick: () => commandsDialog() },
     ]);
@@ -997,6 +1295,7 @@ export function createChatView(ctx) {
     }
     if (e.key === 'Escape') {
       if (st.editing || st.replyTo) { e.preventDefault(); e.stopPropagation(); return cancelBar(); }
+      if (st.onlyAuthor) { e.preventDefault(); return setAuthorFilter(null); }
       scrollToBottom(true);
       return;
     }
@@ -1060,7 +1359,8 @@ export function createChatView(ctx) {
     const readonly = room?.readonly && !data.can('manageNodes');
     const allowed = data.can('sendMessage') && !!room && !readonly;
     ta.disabled = !allowed;
-    ta.placeholder = readonly ? '📢 공지 채널입니다. 로그인한 사용자만 글을 쓸 수 있어요.' : allowed ? `#${room?.name || ''}에 메시지 보내기` : '메시지를 보낼 수 없습니다';
+    const target = room?.type === 'dm' ? `@${data.dmPartner(room).nickname}` : `#${room?.name || ''}`;
+    ta.placeholder = readonly ? '📢 공지 채널입니다. 로그인한 사용자만 글을 쓸 수 있어요.' : allowed ? `${target}에 메시지 보내기` : '메시지를 보낼 수 없습니다';
     composer.classList.toggle('disabled', !allowed);
     plusBtn.disabled = !allowed;
     sendBtn.disabled = !allowed || st.slowUntil > Date.now();
@@ -1074,11 +1374,20 @@ export function createChatView(ctx) {
       st.since = since;
       st.messages = [];
       st.files = [];
+      st.stored = [];
       st.spoilers = new Set();
       st.replyTo = null;
       st.editing = null;
       st.newCount = 0;
       st.slowUntil = 0;
+      st.backStack = [];
+      st.unreadDismissed = false;
+      st.hidden = new Set([...st.hidden].filter((id) => [...pendingDeletes.keys()].some((k) => k.split(',').includes(id))));
+      if (st.selecting) { st.selecting = false; st.selected.clear(); el.classList.remove('selecting'); renderSelectBar(); }
+      st.onlyAuthor = null;
+      renderFilterBar();
+      updateBack();
+      unreadBar.hidden = true;
       clearInterval(slowTimer);
       slowBar.hidden = true;
       renderTitle();
@@ -1089,14 +1398,17 @@ export function createChatView(ctx) {
       renderTyping();
       ta.value = drafts.get(roomId);
       autosize();
-      list.replaceChildren(h('div', { class: 'list-loading' }, h('div', { class: 'spinner' })));
+      list.replaceChildren(skeletonList());
       await reload();
       if (!isTouch()) ta.focus({ preventScroll: true });
     },
     jumpTo,
     scrollToBottom,
     focus: () => ta.focus(),
+    close() { st.roomId = null; st.token += 1; list.replaceChildren(); },
     get atBottom() { return st.atBottom; },
+    get selecting() { return st.selecting; },
+    stopSelect,
     empty: () => emptyState('hash', '채팅방을 선택하세요', '왼쪽 목록에서 채팅방이나 통화방을 선택하세요.'),
   };
 }

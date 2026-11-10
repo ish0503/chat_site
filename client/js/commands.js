@@ -131,6 +131,9 @@ export const COMMANDS = [
   { name: 'status', args: '<상태 메시지>', desc: '상태 메시지 바꾸기' },
   { name: 'topic', args: '<설명>', desc: '채팅방 설명 바꾸기', perm: 'manageNodes' },
   { name: 'code', args: '[언어] <코드>', desc: '코드 블록으로 보내기 (예: /code py print(1))' },
+  { name: 'dm', args: '<닉네임> [메시지]', desc: '1:1 대화 열기 (메시지를 적으면 바로 보냄)', perm: 'directMessage' },
+  { name: 'ai', args: '<질문>', desc: 'AI 도우미에게 이 방의 대화 기록에 대해 묻기', perm: 'useAi' },
+  { name: 'summary', args: '', desc: 'AI 도우미로 최근 대화 요약', perm: 'useAi' },
   { name: 'help', args: '', desc: '명령어 도움말' },
 ];
 
@@ -193,6 +196,14 @@ export function runCommand(text) {
       if (c && /^(js|javascript|py|python|html|css|json|ts|c|cpp|java|go|rust|sql|bash|sh)$/i.test(c[1])) return { send: { content: `\`\`\`${c[1]}\n${c[2]}\n\`\`\`` } };
       return rest ? { send: { content: `\`\`\`\n${rest}\n\`\`\`` } } : { error: '코드를 적어 주세요.' };
     }
+    case 'dm': {
+      const d = rest.match(/^@?(\S+)(?:\s+([\s\S]+))?$/);
+      return d ? { dm: { name: d[1], text: (d[2] || '').trim() } } : { error: '형식: /dm 닉네임 [메시지]' };
+    }
+    case 'ai':
+      return rest ? { ai: { mode: 'ask', question: rest.slice(0, 500) } } : { error: '질문을 적어 주세요. 예: /ai 회의 날짜가 언제로 정해졌어?' };
+    case 'summary':
+      return { ai: { mode: 'summary' } };
     case 'help':
       return { help: true };
     default:

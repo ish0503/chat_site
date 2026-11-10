@@ -1,9 +1,10 @@
 import { config, setServerUrl } from '../config.js';
 import * as api from '../api.js';
 import {
-  h, toast, fmtFull, fmtBytes, fmtStamp, imageToAvatar, setClock24, safeImageUrl,
+  h, toast, fmtFull, fmtBytes, fmtStamp, imageToAvatar, setClock24, safeImageUrl, isLowEndDevice,
 } from '../util.js';
 import { blobStats } from '../db.js';
+import * as errorlog from '../errorlog.js';
 import { PROVIDER_LABEL } from '../permissions.js';
 import { renderMarkdown } from '../markdown.js';
 import { notes, blocked } from '../local.js';
@@ -11,7 +12,7 @@ import { COMMANDS } from '../commands.js';
 import { runnable, langFromName } from '../runner.js';
 import * as files from '../files.js';
 import {
-  openModal, confirmDialog, field, avatar, badge, openEmojiPicker, PRESENCE_LABEL,
+  openModal, confirmDialog, field, avatar, badge, openEmojiPicker, PRESENCE_LABEL, openMenu,
 } from './common.js';
 import { icon } from './icons.js';
 import { errorText } from './errors.js';
@@ -285,13 +286,41 @@ export function exportDialog(ctx, node) {
 }
 
 // ───────── 메시지 관련 ─────────
+/** 단어 단위 비교 (수정 전후에서 지워진 부분 · 추가된 부분) */
+export function diffWords(a = '', b = '') {
+  const A = a.split(/(\s+)/);
+  const B = b.split(/(\s+)/);
+  if (A.length * B.length > 250_000) return [{ op: 'del', text: a }, { op: 'add', text: b }];
+  const dp = Array.from({ length: A.length + 1 }, () => new Uint16Array(B.length + 1));
+  for (let i = A.length - 1; i >= 0; i--) for (let j = B.length - 1; j >= 0; j--) dp[i][j] = A[i] === B[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+  const out = [];
+  const push = (op, text) => { if (out.at(-1)?.op === op) out.at(-1).text += text; else out.push({ op, text }); };
+  let i = 0; let j = 0;
+  while (i < A.length && j < B.length) {
+    if (A[i] === B[j]) { push('same', A[i]); i++; j++; } else if (dp[i + 1][j] >= dp[i][j + 1]) push('del', A[i++]); else push('add', B[j++]);
+  }
+  while (i < A.length) push('del', A[i++]);
+  while (j < B.length) push('add', B[j++]);
+  return out;
+}
+
 export function editHistoryDialog(ctx, m) {
-  const versions = [...(m.editHistory || []), { content: m.content, at: m.editedAt, current: true }].reverse();
+  const versions = [...(m.editHistory || []), { content: m.content, at: m.editedAt, current: true }];
+  let showDiff = true;
+  const box = h('div', { class: 'history' });
+  const render = () => {
+    box.replaceChildren(...versions.map((v, i) => ({ v, prev: versions[i - 1] })).reverse().map(({ v, prev }) => h('div', { class: `history-item${v.current ? ' current' : ''}` },
+      h('div', { class: 'muted small' }, v.current ? `현재 · ${fmtStamp(v.at)}` : i18nVersion(versions.indexOf(v), v.at)),
+      showDiff && prev
+        ? h('div', { class: 'msg-text diff' }, diffWords(prev.content || '', v.content || '').map((d) => (d.op === 'same' ? d.text : h(d.op === 'add' ? 'ins' : 'del', {}, d.text))))
+        : h('div', { class: 'msg-text', html: renderMarkdown(v.content || '', { me: ctx.data.me }) }))));
+  };
+  const i18nVersion = (i, at) => (i === 0 ? `원래 내용 · ${fmtStamp(at)}` : `${i}번째 수정 · ${fmtStamp(at)}`);
+  render();
   openModal({
-    title: '수정 기록',
-    body: h('div', { class: 'history' }, versions.map((v) => h('div', { class: `history-item${v.current ? ' current' : ''}` },
-      h('div', { class: 'muted small' }, v.current ? `현재 · ${fmtStamp(v.at)}` : fmtStamp(v.at)),
-      h('div', { class: 'msg-text', html: renderMarkdown(v.content || '', { me: ctx.data.me }) })))),
+    title: `수정 기록 (${versions.length - 1}번 수정됨)`,
+    body: [h('label', { class: 'switch-row small' }, h('span', {}, '바뀐 부분 표시 (지운 글 / 추가한 글)'),
+      h('input', { type: 'checkbox', class: 'switch', checked: true, onchange: (e) => { showDiff = e.target.checked; render(); } })), box],
     actions: [{ label: '닫기' }],
   });
 }
@@ -304,19 +333,20 @@ export function forwardDialog(ctx, m) {
   let modal = null;
   const render = () => {
     const s = q.value.trim().toLowerCase();
-    const rooms = [...data.nodes.values()].filter((n) => n.type === 'text' && n.name.toLowerCase().includes(s) && !(n.readonly && !data.can('manageNodes')));
+    const rooms = [...data.nodes.values()].filter((n) => ((n.type === 'text' && !(n.readonly && !data.can('manageNodes'))) || n.type === 'dm') && data.roomLabel(n).toLowerCase().includes(s))
+      .sort((a, b) => (a.type === 'dm') - (b.type === 'dm') || (b.lastMessageAt || 0) - (a.lastMessageAt || 0));
     list.replaceChildren(...rooms.map((n) => h('button', {
       class: 'qs-item', type: 'button',
       onclick: async () => {
         modal.close();
         try {
           await data.sendMessage(n.id, { forward: m });
-          toast(`#${n.name}(으)로 전달했습니다.`, 'success');
+          toast(`${n.type === 'dm' ? '@' : '#'}${data.roomLabel(n)}(으)로 전달했습니다.`, 'success');
         } catch (e) {
           toast(errorText(e), 'error');
         }
       },
-    }, n.emoji ? h('span', {}, n.emoji) : icon('hash', 16), h('span', {}, n.name), h('span', { class: 'muted small' }, pathOf(n)))));
+    }, n.type === 'dm' ? avatar(data.dmPartner(n), 18) : n.emoji ? h('span', {}, n.emoji) : icon('hash', 16), h('span', {}, data.roomLabel(n)), h('span', { class: 'muted small' }, n.type === 'dm' ? '1:1 대화' : pathOf(n)))));
     if (!rooms.length) list.append(h('p', { class: 'muted small pad' }, '전달할 수 있는 채팅방이 없습니다.'));
   };
   q.addEventListener('input', render);
@@ -420,7 +450,11 @@ export function profileDialog(ctx, userId) {
         u.createdAt ? [h('dt', {}, '가입일'), h('dd', {}, fmtFull(u.createdAt))] : null),
       !isMe ? h('div', { class: 'profile-extra' },
         field('메모', note),
-        h('div', { class: 'row gap' },
+        h('div', { class: 'row gap wrap' },
+          data.can('directMessage') ? h('button', {
+            class: 'btn primary small', type: 'button',
+            onclick: async () => { modal.close(); try { const n = await data.openDm(userId); ctx.openRoom(n.id); } catch (e) { toast(errorText(e), 'error'); } },
+          }, icon('message', 14), ' 메시지 보내기') : null,
           h('button', { class: 'btn secondary small', type: 'button', onclick: () => { modal.close(); ctx.searchFrom(u); } }, icon('search', 14), ' 이 사람의 메시지'),
           h('button', {
             class: `btn small ${isBlocked ? 'secondary' : 'danger-ghost'}`, type: 'button',
@@ -505,7 +539,10 @@ export const settings = (() => {
     theme: 'dark', enterToSend: true, notify: false, compact: false, compressImages: true,
     fontSize: 'normal', accent: 'blurple', clock24: false, reduceMotion: false, autoloadMedia: true, embeds: true,
     filterWords: '', keywords: '', sound: true, vibrate: true, notifyPreview: true, notifyMode: 'all', sendTyping: true,
-    callSounds: true, ptt: false, ...s,
+    callSounds: true, ptt: false,
+    // v1.0: 화면 크기 · 간격, 애니메이션 자동 조절, 사이드바 구성, 멤버 목록 고정, 오류 자동 보고
+    autoMotion: true, density: 'normal', uiScale: 100, sidebarWidth: 264, panelWidth: 360, membersDock: false,
+    sidebarSections: ['favorites', 'dms', 'rooms', 'archive'], sidebarHidden: [], errorReports: true, ...s,
   };
 })();
 export const listSetting = (k) => (settings[k] || '').split(',').map((x) => x.trim()).filter(Boolean);
@@ -522,6 +559,13 @@ export function applyTheme() {
   root.dataset.theme = t;
   root.classList.toggle('compact', !!settings.compact);
   root.classList.toggle('reduce-motion', !!settings.reduceMotion);
+  // 저사양 기기(메모리 2GB 이하, 코어 2개 이하, 데이터 절약, 시스템의 동작 줄이기)에서는 효과를 자동으로 가볍게
+  root.classList.toggle('lite', !settings.reduceMotion && settings.autoMotion !== false && isLowEndDevice());
+  root.dataset.density = settings.density || 'normal';
+  root.style.setProperty('--side-w', `${Math.min(420, Math.max(200, Number(settings.sidebarWidth) || 264))}px`);
+  root.style.setProperty('--panel-w', `${Math.min(560, Math.max(280, Number(settings.panelWidth) || 360))}px`);
+  const scale = Math.min(130, Math.max(80, Number(settings.uiScale) || 100));
+  root.style.zoom = scale === 100 ? '' : `${scale}%`;
   const accent = ACCENTS[settings.accent] || ACCENTS.blurple;
   root.style.setProperty('--accent', accent);
   root.style.setProperty('--accent-soft', `${accent}2e`);
@@ -571,7 +615,7 @@ export function openServerSettings() {
 export function settingsDialog(ctx) {
   const { data } = ctx;
   const select = (key, options, onChange) => h('select', { class: 'input', onchange: (e) => { saveSettings({ [key]: e.target.value }); onChange?.(e.target.value); } },
-    options.map(([v, l]) => h('option', { value: v, selected: settings[key] === v }, l)));
+    options.map(([v, l]) => h('option', { value: v, selected: String(settings[key]) === v }, l)));
   const text = (key, placeholder) => h('input', { class: 'input', value: settings[key] || '', placeholder, onchange: (e) => saveSettings({ [key]: e.target.value }) });
   const toggle = (key, label, onChange) => h('label', { class: 'switch-row' },
     h('span', {}, label),
@@ -584,6 +628,13 @@ export function settingsDialog(ctx) {
       },
     }));
   const section = (ic, title, ...kids) => h('section', { class: 'settings-section' }, h('h3', {}, icon(ic, 16), ` ${title}`), ...kids);
+  const rangeField = (label, key, min, max) => {
+    const out = h('span', { class: 'muted small' }, `${settings[key]}px`);
+    return field(label, h('div', { class: 'row gap' }, h('input', {
+      type: 'range', class: 'grow', min: String(min), max: String(max), step: '4', value: String(settings[key]),
+      oninput: (e) => { out.textContent = `${e.target.value}px`; saveSettings({ [key]: Number(e.target.value) }); },
+    }), out));
+  };
   const storage = h('span', { class: 'muted' }, '계산 중…');
   blobStats().then((s) => { storage.textContent = `기기에 저장된 파일 ${s.count}개 · ${fmtBytes(s.bytes)}`; });
   const connInfo = h('p', { class: 'muted small' });
@@ -618,8 +669,15 @@ export function settingsDialog(ctx) {
         field('강조 색', select('accent', Object.keys(ACCENTS).map((k) => [k, ACCENT_LABEL[k]]))),
         field('글자 크기', select('fontSize', [['small', '작게'], ['normal', '보통'], ['large', '크게'], ['xlarge', '아주 크게']])),
         toggle('compact', '컴팩트 메시지 표시'),
+        field('메시지 간격', select('density', [['compact', '좁게'], ['normal', '보통'], ['cozy', '넓게']])),
+        field('화면 배율', select('uiScale', [['80', '80%'], ['90', '90%'], ['100', '100%'], ['110', '110%'], ['125', '125%']].map(([v, l]) => [v, l]), () => {}), '앱 전체(글자 · 버튼 · 여백)를 크게 또는 작게'),
+        rangeField('사이드바 너비', 'sidebarWidth', 200, 420),
+        rangeField('오른쪽 패널 너비', 'panelWidth', 280, 560),
         toggle('clock24', '24시간제 시각'),
-        toggle('reduceMotion', '애니메이션 줄이기')),
+        toggle('reduceMotion', '애니메이션 줄이기'),
+        toggle('autoMotion', `저사양 기기에서 효과 자동 줄이기${isLowEndDevice() ? ' (이 기기: 적용 중)' : ''}`),
+        toggle('membersDock', '넓은 화면에서 멤버 목록 항상 표시 (멀티 패널)'),
+        h('button', { class: 'btn secondary small', type: 'button', onclick: () => sidebarCustomizeDialog() }, icon('sliders', 14), ' 사이드바 구성 바꾸기')),
       section('edit', '채팅',
         toggle('enterToSend', 'Enter로 전송 (Shift+Enter 줄바꿈)'),
         toggle('compressImages', '사진 보낼 때 용량 줄이기 (더 빠르게 전송)'),
@@ -641,6 +699,10 @@ export function settingsDialog(ctx) {
         toggle('vibrate', '진동 (모바일)'),
         field('키워드 알림', text('keywords', '쉼표로 구분, 예: 회의, 마감'), '이 단어가 들어간 메시지는 멘션처럼 강조하고 알려줍니다.'),
         h('p', { class: 'field-hint' }, '방해 금지 상태에서는 알림과 효과음이 울리지 않습니다. 방마다 알림은 사이드바의 방 메뉴에서 바꿀 수 있습니다.')),
+      section('shield', '개인정보 · 오류 보고',
+        toggle('errorReports', '오류 자동 보고 (오류 코드 · 브라우저 정보만, 메시지 내용 제외)'),
+        h('div', { class: 'row gap wrap' },
+          h('button', { class: 'btn secondary small', type: 'button', onclick: () => errorLogDialog() }, icon('alert', 14), ` 오류 기록 (${errorlog.list().length})`))),
       section('voice', '통화',
         toggle('callSounds', '참가자 입장·퇴장 효과음'),
         toggle('ptt', '눌러서 말하기 (Space 키를 누르는 동안만 마이크 켜기)')),
@@ -653,6 +715,10 @@ export function settingsDialog(ctx) {
         st.pendingOps ? h('p', { class: 'muted' }, `동기화 대기 중인 작업 ${st.pendingOps}개`) : null,
         h('p', { class: 'field-hint' }, `첨부파일은 업로드 후 ${Math.round(data.fileTtlMs / 3600_000)}시간 동안만 내려받을 수 있습니다. 기간이 지나면 이 기기에 저장된 사본만 볼 수 있고 다시 내려받을 수는 없습니다.`),
         storage,
+        h('div', { class: 'row gap wrap' },
+          h('button', { class: 'btn secondary', type: 'button', onclick: () => serverStatusDialog(ctx) }, icon('activity', 16), ' 서버 상태'),
+          h('button', { class: 'btn secondary', type: 'button', onclick: () => dataToolsDialog(ctx) }, icon('refresh', 16), ' 데이터 복구 · 백업'),
+          data.can('storage') ? h('button', { class: 'btn secondary', type: 'button', onclick: () => storageDialog(ctx) }, icon('archive', 16), ' 내 보관함') : null),
         h('div', { class: 'row gap' },
           h('button', {
             class: 'btn danger-ghost', type: 'button',
@@ -684,6 +750,7 @@ export function shortcutsDialog() {
     ['Esc', '읽음 처리하고 맨 아래로 · 답장/수정 취소'], ['↑ (빈 입력창)', '내 마지막 메시지 수정'], ['Enter / Shift + Enter', '보내기 / 줄바꿈'],
     ['Ctrl/⌘ + B · I · U', '굵게 · 기울임 · 밑줄'], ['Ctrl/⌘ + Shift + X', '취소선'], ['Ctrl/⌘ + E', '인라인 코드'],
     ['@ · : · /', '멘션 · 이모지 · 명령어 자동완성'], ['Space (통화 중, 설정 시)', '눌러서 말하기'], ['Ctrl/⌘ + /', '이 도움말'],
+    ['Ctrl/⌘ + Shift + F', '통합 탐색 (방 · 사람 · 파일 · 메시지)'], ['Ctrl/⌘ + \\', '분할 화면 열기 / 닫기'], ['Ctrl/⌘ + .', '빠른 설정'],
   ];
   openModal({
     title: '⌨️ 키보드 단축키',
@@ -764,4 +831,303 @@ export function lightbox(arg, list = null) {
   document.body.append(back);
   document.addEventListener('keydown', onKey);
   show(index);
+}
+
+// ───────── 사이드바 구성 ─────────
+export const SIDEBAR_SECTIONS = {
+  favorites: '⭐ 즐겨찾기', dms: '💬 개인 메시지 (최근 대화)', rooms: '# 채팅방 · 통화방 · 폴더', archive: '🗄 보관한 방',
+};
+export function sidebarCustomizeDialog() {
+  let order = [...new Set([...(settings.sidebarSections || []), ...Object.keys(SIDEBAR_SECTIONS)])].filter((k) => SIDEBAR_SECTIONS[k]);
+  let hidden = new Set(settings.sidebarHidden || []);
+  const box = h('div', { class: 'reorder-list' });
+  const save = () => saveSettings({ sidebarSections: order, sidebarHidden: [...hidden] });
+  const render = () => box.replaceChildren(...order.map((k, i) => h('div', { class: 'reorder-row' },
+    h('input', { type: 'checkbox', class: 'switch', checked: !hidden.has(k), 'aria-label': `${SIDEBAR_SECTIONS[k]} 표시`, onchange: (e) => { if (e.target.checked) hidden.delete(k); else hidden.add(k); save(); } }),
+    h('span', { class: 'grow' }, SIDEBAR_SECTIONS[k]),
+    h('button', { class: 'icon-btn tiny', type: 'button', 'aria-label': '위로', disabled: i === 0, onclick: () => { [order[i - 1], order[i]] = [order[i], order[i - 1]]; save(); render(); } }, icon('chevronDown', 16, 'flip')),
+    h('button', { class: 'icon-btn tiny', type: 'button', 'aria-label': '아래로', disabled: i === order.length - 1, onclick: () => { [order[i + 1], order[i]] = [order[i], order[i + 1]]; save(); render(); } }, icon('chevronDown', 16)))));
+  render();
+  openModal({
+    title: '사이드바 구성',
+    body: [h('p', { class: 'muted small' }, '사이드바에 보일 목록과 순서를 고르세요. (이 기기에만 적용)'), box,
+      h('button', { class: 'btn ghost small', type: 'button', onclick: () => { order = Object.keys(SIDEBAR_SECTIONS); hidden = new Set(); save(); render(); } }, '기본값으로')],
+    actions: [{ label: '닫기' }],
+  });
+}
+
+// ───────── 빠른 설정 ─────────
+export function quickSettings(ctx, anchor) {
+  const { data } = ctx;
+  const cycle = (key, values) => { const i = values.indexOf(String(settings[key])); saveSettings({ [key]: values[(i + 1) % values.length] }); };
+  const themeLabel = { dark: '다크', light: '라이트', system: '시스템' }[settings.theme];
+  const dnd = data.me.presence === 'dnd';
+  return openMenu(anchor, [
+    { label: `테마: ${themeLabel} (바꾸기)`, icon: 'smile', onClick: () => cycle('theme', ['dark', 'light', 'system']) },
+    { label: `글자 크기: ${{ small: '작게', normal: '보통', large: '크게', xlarge: '아주 크게' }[settings.fontSize]}`, icon: 'edit', onClick: () => cycle('fontSize', ['small', 'normal', 'large', 'xlarge']) },
+    { label: `메시지 간격: ${{ compact: '좁게', normal: '보통', cozy: '넓게' }[settings.density || 'normal']}`, icon: 'sliders', onClick: () => cycle('density', ['compact', 'normal', 'cozy']) },
+    { label: `${settings.sound ? '✓ ' : ''}효과음`, icon: 'bell', onClick: () => saveSettings({ sound: !settings.sound }) },
+    { label: `${dnd ? '✓ ' : ''}방해 금지`, icon: 'bellOff', onClick: () => data.updateProfile({ presence: dnd ? 'online' : 'dnd' }).catch((e) => toast(errorText(e), 'error')) },
+    { label: `${settings.reduceMotion ? '✓ ' : ''}애니메이션 줄이기`, icon: 'play', onClick: () => saveSettings({ reduceMotion: !settings.reduceMotion }) },
+    { label: `${settings.membersDock ? '✓ ' : ''}멤버 목록 항상 표시`, icon: 'users', onClick: () => saveSettings({ membersDock: !settings.membersDock }) },
+    'sep',
+    { label: '서버 상태', icon: 'activity', onClick: () => serverStatusDialog(ctx) },
+    data.can('storage') ? { label: '내 보관함', icon: 'archive', onClick: () => storageDialog(ctx) } : null,
+    { label: '사이드바 구성', icon: 'sliders', onClick: () => sidebarCustomizeDialog() },
+    { label: '모든 설정', icon: 'gear', onClick: () => settingsDialog(ctx) },
+  ]);
+}
+
+// ───────── 서버 상태 모니터링 ─────────
+const fmtUptime = (sec) => (sec >= 86400 ? `${Math.floor(sec / 86400)}일 ${Math.floor((sec % 86400) / 3600)}시간` : sec >= 3600 ? `${Math.floor(sec / 3600)}시간 ${Math.floor((sec % 3600) / 60)}분` : `${Math.floor(sec / 60)}분`);
+
+export function serverStatusDialog(ctx) {
+  const { data } = ctx;
+  const body = h('div', { class: 'status-grid' }, h('div', { class: 'spinner' }));
+  let timer = null;
+  const row = (label, ok, value, hint) => h('div', { class: `status-row ${ok === true ? 'ok' : ok === false ? 'bad' : 'unknown'}` },
+    h('span', { class: 'status-dot', 'aria-hidden': 'true' }), h('span', { class: 'status-label' }, label), h('span', { class: 'status-value' }, value),
+    hint ? h('span', { class: 'status-hint muted small' }, hint) : null);
+  async function refresh() {
+    const r = await data.serverStatus();
+    const st = r.status;
+    const items = [];
+    if (!r.serverUrl) {
+      items.push(row('서버', null, '로컬 모드', '서버 주소가 없어 이 기기에만 저장합니다.'));
+    } else {
+      items.push(row('API (HTTP)', !r.apiError, r.apiError ? `응답 없음 (${errorText({ code: r.apiError })})` : `정상 · ${r.apiMs}ms`, r.health?.version ? `서버 버전 ${r.health.version}` : null));
+      items.push(row('데이터베이스 (MongoDB)', r.health ? !!r.health.db : null, r.health ? (r.health.db ? `연결됨${st?.db?.pingMs != null ? ` · ${st.db.pingMs}ms` : ''}${st?.db?.memory ? ' · 메모리 DB' : ''}` : '연결 끊김 → 기기에 저장 중') : '확인 불가'));
+      items.push(row('실시간 연결 (WebSocket)', data.isOnline ? true : r.apiError ? false : null, data.isOnline ? `${r.ws?.transport === 'websocket' ? 'WebSocket' : 'HTTP polling'}${r.ws ? ` · 왕복 ${r.ws.rtt}ms` : ''}` : { connecting: '연결 중…', offline: '끊김', local: '사용 안 함' }[data.mode]));
+      items.push(row('동기화', data.pendingOps ? null : data.isOnline, data.pendingOps ? `대기 중인 작업 ${data.pendingOps}개` : '모두 동기화됨', r.lastSync ? `마지막 동기화 ${fmtStamp(r.lastSync)}` : null));
+      if (r.sessionExpiresAt) {
+        const left = r.sessionExpiresAt - Date.now();
+        items.push(row('로그인 세션', left > 86400_000, left > 0 ? `${fmtUptime(Math.floor(left / 1000))} 남음` : '만료됨', '연결되어 있으면 만료 7일 전에 자동으로 갱신됩니다.'));
+      }
+      if (st) {
+        items.push(row('서버 가동 시간', true, fmtUptime(st.uptimeSec), `Node ${st.node} · 메모리 ${st.memoryMb.rss}MB`));
+        items.push(row('접속', true, `${st.onlineUsers}명 온라인 · 연결 ${st.sockets}개`, `분당 메시지 ${st.messagesPerMin}개`));
+        items.push(row('통화', true, `${st.calls.rooms}개 방 · ${st.calls.participants}명`, `방당 최대 ${st.calls.max}명 · ${st.calls.mode === 'sfu' ? 'SFU' : '직접 연결(mesh)'}`));
+        const errs = st.errors.serverLastHour + st.errors.clientLastHour;
+        items.push(row('오류 (최근 1시간)', errs === 0 ? true : errs < 20 ? null : false, `서버 ${st.errors.serverLastHour}건 · 앱 ${st.errors.clientLastHour}건`, st.errors.reportsLastDay != null ? `최근 24시간 오류 보고 ${st.errors.reportsLastDay}건` : null));
+        const limited = Object.values(st.rateLimited || {}).reduce((a, b) => a + b, 0);
+        if (limited) items.push(row('요청 제한', null, `${limited}건 차단됨`, Object.entries(st.rateLimited).filter(([, v]) => v).map(([k, v]) => `${k} ${v}`).join(' · ')));
+        if (st.errors.recent?.length) {
+          items.push(h('details', { class: 'status-errors' }, h('summary', {}, `최근 서버 오류 ${st.errors.recent.length}건 (관리자만 보임)`),
+            ...st.errors.recent.map((e) => h('div', { class: 'muted small mono' }, `${fmtStamp(e.at)} [${e.where}] ${e.message}`))));
+        }
+      } else if (r.statusError) {
+        items.push(row('상세 상태', null, '받을 수 없음', '이 서버가 상태 정보를 지원하지 않거나 로그인이 필요합니다.'));
+      }
+    }
+    body.replaceChildren(...items, h('p', { class: 'muted small' }, `5초마다 자동 새로고침 · ${new Date().toLocaleTimeString('ko-KR')}`));
+  }
+  refresh();
+  timer = setInterval(refresh, 5000);
+  openModal({
+    title: '서버 상태',
+    cls: 'status-modal',
+    body,
+    onClose: () => clearInterval(timer),
+    actions: [{ label: '다시 연결', onClick: () => { data.connect(); return false; } }, { label: '닫기', kind: 'primary' }],
+  });
+}
+
+// ───────── 데이터 복구 · 백업 ─────────
+export function dataToolsDialog(ctx) {
+  const { data } = ctx;
+  const report = h('div', { class: 'muted small' }, '검사 중…');
+  const outbox = h('div', { class: 'outbox-list' });
+  const inspect = async (fix = false) => {
+    const r = await data.inspectLocal({ fix });
+    report.replaceChildren(
+      h('div', {}, `기기에 저장된 메시지 ${r.messages.toLocaleString()}개 · 방 ${r.rooms}개 · 파일 사본 ${r.blobs}개 · 동기화 대기 ${r.outbox}개`),
+      r.failed ? h('div', { class: 'warn-text' }, `전송 실패한 메시지 ${r.failed}개 (메시지의 "다시 보내기"로 재전송)`) : null,
+      !r.local && (r.orphanMsgs || r.orphanBlobs) ? h('div', {}, `정리할 수 있는 데이터: 삭제된 방의 메시지 ${r.orphanMsgs}개, 쓰이지 않는 파일 사본 ${r.orphanBlobs}개`) : h('div', {}, '✅ 정리할 데이터가 없습니다.'),
+    );
+    if (fix) toast('기기 데이터를 정리했습니다.', 'success');
+  };
+  const renderOutbox = async () => {
+    const ops = await data.outboxList();
+    const label = { 'msg:send': '메시지 보내기', upload: '파일 업로드', 'msg:edit': '메시지 수정', 'msg:delete': '메시지 삭제', 'msg:deleteMany': '메시지 여러 개 삭제', 'msg:react': '반응', 'msg:pin': '고정', 'msg:vote': '투표', 'node:create': '방 만들기', 'node:update': '방 수정', 'node:delete': '방 삭제', 'profile:update': '프로필 수정', 'dm:open': '1:1 대화 시작' };
+    outbox.replaceChildren(...(ops.length ? ops.map((o) => h('div', { class: 'link-row' },
+      h('span', { class: 'grow ellipsis' }, `${label[o.op] || o.op}${o.payload?.content ? ` · ${String(o.payload.content).slice(0, 40)}` : ''}`),
+      h('span', { class: 'muted small' }, o.at ? fmtStamp(o.at) : ''),
+      h('button', { class: 'btn small ghost', type: 'button', onclick: async () => { await data.discardOutbox(o.seq); renderOutbox(); } }, '취소'))) : [h('p', { class: 'muted small' }, '동기화를 기다리는 작업이 없습니다.')]),
+    ...(data.dropped?.length ? [h('p', { class: 'muted small' }, `이번 접속에서 서버가 거부해 버린 작업 ${data.dropped.length}개: ${data.dropped.map((d) => `${label[d.op] || d.op}(${errorText({ code: d.error })})`).join(', ')}`)] : []));
+  };
+  const fileInput = h('input', {
+    type: 'file', accept: 'application/json,.json', hidden: true,
+    onchange: async () => {
+      const f = fileInput.files[0];
+      fileInput.value = '';
+      if (!f) return;
+      try {
+        const r = await data.importBackup(JSON.parse(await f.text()));
+        toast(`복원했습니다: 메시지 ${r.messages}개, 방 ${r.nodes}개, 다시 보낼 작업 ${r.requeued}개`, 'success', 6000);
+        inspect(); renderOutbox();
+      } catch (e) {
+        toast(e instanceof SyntaxError ? '백업 파일을 읽을 수 없습니다.' : errorText(e), 'error');
+      }
+    },
+  });
+  inspect();
+  renderOutbox();
+  openModal({
+    title: '데이터 복구 · 백업',
+    cls: 'settings-modal',
+    body: [
+      h('section', { class: 'settings-section' }, h('h3', {}, icon('device', 16), ' 기기 데이터 검사'), report,
+        h('div', { class: 'row gap wrap' },
+          h('button', { class: 'btn secondary small', type: 'button', onclick: () => inspect() }, '다시 검사'),
+          h('button', { class: 'btn secondary small', type: 'button', onclick: () => inspect(true) }, '정리하기'))),
+      h('section', { class: 'settings-section' }, h('h3', {}, icon('clock', 16), ' 동기화 대기열'), outbox),
+      h('section', { class: 'settings-section' }, h('h3', {}, icon('cloud', 16), ' 서버에서 다시 받기'),
+        h('p', { class: 'muted small' }, '기기에 저장된 대화 사본이 서버와 다를 때 사용합니다. 아직 보내지 않은 메시지는 지우지 않습니다.'),
+        h('button', {
+          class: 'btn secondary small', type: 'button', disabled: !data.isOnline,
+          onclick: async () => {
+            const ok = await confirmDialog({ title: '서버에서 다시 받기', message: '기기에 캐시된 메시지를 지우고 서버에서 다시 받을까요?\n(보내지 않은 메시지, 파일 사본은 유지됩니다)', confirmText: '다시 받기' });
+            if (!ok) return;
+            try { await data.resyncFromServer(); toast('서버에서 다시 받았습니다.', 'success'); inspect(); } catch (e) { toast(errorText(e), 'error'); }
+          },
+        }, data.isOnline ? '서버에서 다시 받기' : '서버에 연결되면 사용할 수 있습니다')),
+      h('section', { class: 'settings-section' }, h('h3', {}, icon('download', 16), ' 백업 · 복원'),
+        h('p', { class: 'muted small' }, '이 기기에 저장된 방 · 메시지 · 동기화 대기 작업 · 개인 설정을 파일로 저장합니다 (첨부파일 내용과 로그인 정보는 제외). 다른 기기나 브라우저에서 복원하면 없는 메시지만 추가됩니다.'),
+        h('div', { class: 'row gap wrap' },
+          h('button', {
+            class: 'btn secondary small', type: 'button',
+            onclick: async () => {
+              const b = await data.exportBackup();
+              const url = URL.createObjectURL(new Blob([JSON.stringify(b)], { type: 'application/json' }));
+              const a = h('a', { href: url, download: `chat-site-backup-${new Date().toISOString().slice(0, 10)}.json` });
+              document.body.append(a); a.click(); a.remove();
+              setTimeout(() => URL.revokeObjectURL(url), 5000);
+              toast(`백업 파일을 저장했습니다 (메시지 ${b.messages.length}개).`, 'success');
+            },
+          }, '백업 파일 저장'),
+          h('button', { class: 'btn secondary small', type: 'button', onclick: () => fileInput.click() }, '백업에서 복원'),
+          fileInput)),
+    ],
+    actions: [{ label: '닫기' }],
+  });
+}
+
+// ───────── 오류 기록 ─────────
+export function errorLogDialog() {
+  const list = errorlog.list();
+  const box = h('div', { class: 'history' }, list.length ? list.map((e) => h('div', { class: 'history-item' },
+    h('div', { class: 'muted small' }, `${fmtStamp(e.at)} · ${e.code} · v${e.version}${e.mode ? ` · ${e.mode}` : ''}`),
+    h('div', { class: 'mono small' }, e.message), e.stack ? h('details', {}, h('summary', { class: 'muted small' }, '자세히'), h('pre', { class: 'mono small pre' }, e.stack)) : null))
+    : h('p', { class: 'muted' }, '기록된 오류가 없습니다. 👍'));
+  openModal({
+    title: '오류 기록',
+    body: [h('p', { class: 'muted small' }, `이 기기에서 난 최근 오류 (최대 50개). ${settings.errorReports !== false ? '서버에 연결되면 자동으로 보고됩니다.' : '자동 보고가 꺼져 있습니다.'}`), box],
+    actions: [
+      { label: '복사', onClick: () => { navigator.clipboard?.writeText(JSON.stringify(list, null, 2)).then(() => toast('복사했습니다.')); return false; } },
+      { label: '지우기', kind: 'danger-ghost', onClick: () => { errorlog.clear(); toast('오류 기록을 지웠습니다.'); } },
+      { label: '닫기', kind: 'primary' },
+    ],
+  });
+}
+
+// ───────── 내 보관함 (만료 없는 개인 파일) ─────────
+async function loadStorage(data, box, { pick = null, onChange } = {}) {
+  box.replaceChildren(h('div', { class: 'spinner' }));
+  try {
+    const r = await data.listStoredFiles();
+    const pct = Math.min(100, Math.round((r.usage / r.quota) * 100));
+    const chosen = new Set();
+    box.replaceChildren(
+      h('div', { class: 'quota' }, h('div', { class: 'quota-bar' }, h('span', { style: { width: `${pct}%` }, class: pct > 90 ? 'full' : '' })), h('span', { class: 'muted small' }, `${fmtBytes(r.usage)} / ${fmtBytes(r.quota)} 사용`)),
+      ...(r.files.length ? r.files.map((f) => h('div', { class: 'link-row storage-row' },
+        pick ? h('input', { type: 'checkbox', 'aria-label': `${f.name} 선택`, onchange: (e) => { if (e.target.checked) chosen.add(f); else chosen.delete(f); } }) : null,
+        icon(f.kind === 'image' ? 'image' : f.kind === 'video' ? 'video' : f.kind === 'audio' ? 'mic' : 'file', 18, 'dim'),
+        h('span', { class: 'grow ellipsis', title: f.name }, f.name),
+        h('span', { class: 'muted small' }, fmtBytes(f.size)),
+        pick ? null : h('button', { class: 'icon-btn tiny', title: '다운로드', type: 'button', onclick: () => files.saveToDevice(f, data).catch((e) => toast(errorText(e), 'error')) }, icon('download', 15)),
+        pick ? null : h('button', {
+          class: 'icon-btn tiny', title: '삭제', type: 'button',
+          onclick: async () => {
+            const ok = await confirmDialog({ title: '보관함에서 삭제', message: `'${f.name}' 을(를) 보관함에서 삭제할까요?\n이 파일을 첨부한 메시지에서도 더 이상 내려받을 수 없습니다.`, confirmText: '삭제', danger: true });
+            if (!ok) return;
+            try { await data.removeStoredFile(f.id); loadStorage(data, box, { onChange }); onChange?.(); } catch (e) { toast(errorText(e), 'error'); }
+          },
+        }, icon('trash', 15))))
+        : [h('p', { class: 'muted small pad' }, '보관한 파일이 없습니다. 채팅 첨부파일의 🗄 버튼으로 보관하거나 직접 올려 보세요.')]),
+    );
+    return () => [...chosen];
+  } catch (e) {
+    box.replaceChildren(h('p', { class: 'muted' }, errorText(e)));
+    return () => [];
+  }
+}
+
+export function storageDialog(ctx) {
+  const { data } = ctx;
+  const box = h('div', { class: 'storage-list' });
+  const progress = h('span', { class: 'muted small' });
+  const input = h('input', {
+    type: 'file', multiple: true, hidden: true,
+    onchange: async () => {
+      const fl = [...input.files];
+      input.value = '';
+      for (const f of fl) {
+        try {
+          await data.uploadToStorage(f, (p) => { progress.textContent = `${f.name} ${Math.round(p * 100)}%`; });
+        } catch (e) { toast(`${f.name}: ${errorText(e)}`, 'error'); }
+      }
+      progress.textContent = '';
+      loadStorage(data, box);
+    },
+  });
+  loadStorage(data, box);
+  openModal({
+    title: '🗄 내 보관함',
+    body: [h('p', { class: 'muted small' }, `채팅 첨부파일은 ${Math.round(data.fileTtlMs / 3600_000)}시간 뒤 만료되지만, 보관함 파일은 직접 지울 때까지 남습니다. 입력창 + → "내 보관함에서 첨부" 로 채팅에 보낼 수 있어요.`),
+      h('div', { class: 'row gap' }, h('button', { class: 'btn secondary small', type: 'button', disabled: !data.isOnline, onclick: () => input.click() }, icon('plus', 14), ' 파일 올리기'), progress, input),
+      box],
+    actions: [{ label: '닫기' }],
+  });
+}
+
+export function storagePicker(ctx, onPick) {
+  const box = h('div', { class: 'storage-list' });
+  let getChosen = () => [];
+  loadStorage(ctx.data, box, { pick: true }).then((fn) => { getChosen = fn; });
+  openModal({
+    title: '보관함에서 첨부',
+    body: box,
+    actions: [{ label: '취소' }, { label: '첨부', kind: 'primary', onClick: () => { const c = getChosen(); if (c.length) onPick(c); } }],
+  });
+}
+
+// ───────── AI 도우미 ─────────
+export function aiDialog(ctx, roomId) {
+  const { data } = ctx;
+  const room = data.nodes.get(roomId);
+  const q = h('input', { class: 'input', placeholder: '예: 지난주에 정한 회의 날짜가 언제였지?', maxlength: '500' });
+  const out = h('div', { class: 'ai-answer' }, h('p', { class: 'muted small' }, '최근 메시지(최대 300개)를 읽고 요약하거나 질문에 답합니다. 기록은 AI 서비스로 전송됩니다.'));
+  let last = null;
+  const run = async (mode) => {
+    if (mode === 'ask' && !q.value.trim()) { q.focus(); return; }
+    out.replaceChildren(h('div', { class: 'spinner' }), h('p', { class: 'muted small' }, 'AI가 대화를 읽고 있어요…'));
+    try {
+      const r = await data.askAi(roomId, { mode, question: q.value.trim() });
+      last = { mode, text: r.text, question: q.value.trim() };
+      out.replaceChildren(h('div', { class: 'msg-text', html: renderMarkdown(r.text, { me: data.me }) }), h('p', { class: 'muted small' }, `🤖 ${r.model || 'AI'} · AI 답변은 틀릴 수 있습니다.`),
+        data.can('sendMessage') ? h('button', {
+          class: 'btn small secondary', type: 'button',
+          onclick: () => data.sendMessage(roomId, { content: `🤖 **AI ${last.mode === 'summary' ? '요약' : `답변: ${last.question.slice(0, 100)}`}**\n${last.text}`.slice(0, 4000) }).then(() => toast('채팅에 공유했습니다.')).catch((e) => toast(errorText(e), 'error')),
+        }, '채팅에 공유') : null);
+    } catch (e) {
+      out.replaceChildren(h('p', { class: 'warn-text' }, errorText(e)));
+    }
+  };
+  q.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); run('ask'); } });
+  openModal({
+    title: `🤖 AI 도우미 · ${room?.type === 'dm' ? `@${data.roomLabel(room)}` : `#${room?.name || ''}`}`,
+    body: [h('div', { class: 'row gap' }, h('button', { class: 'btn secondary', type: 'button', onclick: () => run('summary') }, icon('sparkle', 16), ' 최근 대화 요약')),
+      field('대화 기록에 대해 묻기', h('div', { class: 'row gap' }, q, h('button', { class: 'btn primary', type: 'button', onclick: () => run('ask') }, '질문'))), out],
+    actions: [{ label: '닫기' }],
+  });
 }

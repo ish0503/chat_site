@@ -18,6 +18,17 @@ const MESSAGES = {
   slowmode: '슬로우 모드입니다. 잠시 후 다시 보내 주세요.',
   invalid_poll: '투표에는 질문과 선택지 2개 이상이 필요합니다.',
   invalid_option: '없는 선택지입니다.',
+  invalid_user: '대화 상대를 찾을 수 없습니다.',
+  invalid_type: '이 방에서는 할 수 없는 작업입니다.',
+  conflict: '다른 작업과 충돌했습니다. 새로고침 후 다시 시도해 주세요.',
+  integrity_failed: '파일이 전송 중 손상되었습니다 (무결성 검사 실패). 다시 시도해 주세요.',
+  quota_exceeded: '보관함 용량이 부족합니다. 필요 없는 파일을 지워 주세요.',
+  call_full: '통화방 인원이 가득 찼습니다.',
+  ai_disabled: 'AI 도우미가 서버에 설정되어 있지 않습니다.',
+  ai_busy: 'AI 도우미가 바쁩니다. 잠시 후 다시 시도해 주세요.',
+  ai_unavailable: 'AI 도우미에 연결할 수 없습니다.',
+  invalid_backup: '올바른 백업 파일이 아닙니다.',
+  discarded: '동기화 대기열에서 취소한 메시지입니다.',
 };
 
 export const errorText = (e) => MESSAGES[e?.code] || MESSAGES[e?.message] || e?.message || '오류가 발생했습니다.';
