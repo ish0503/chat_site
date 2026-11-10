@@ -18,6 +18,19 @@
 | 통화방 | WebRTC 음성 · 영상 · 화면 공유, 음소거 · 소리 끄기, 말하는 사람 표시, 사이드바에 통화 참여자 표시 |
 | 모바일 | 슬라이드 사이드바(스와이프), 길게 눌러 메시지 메뉴(바텀시트), 안전 영역(노치) 대응, 16px 입력창(확대 방지) |
 
+### v1.0 — Beyond Chat
+
+**자세한 내용은 [FEATURES.md](FEATURES.md#v10--beyond-chat) 에 있습니다.**
+
+- **1:1 개인 메시지** — 두 사람만 보는 대화(서버에서 접근 제어), 최근 대화 순 목록, `/dm`
+- **통합 탐색 · 분할 화면 · 멀티 패널** — Ctrl/⌘+Shift+F 로 방·사람·메시지·파일 검색, 두 방 나란히 보기, 멤버 목록 항상 표시
+- **채팅 사용성** — 답장 탐색, 여러 메시지 선택·삭제(실행 취소), 안 읽은 곳으로 이동, 사람별 필터, 방별 검색 기록, 수정 전후 비교, 방 보관
+- **내 보관함** — 만료 없는 개인 파일 공간 (첨부를 만료 전에 보관)
+- **안정성 · 보안** — 중복 전송 방지, 수정 충돌 처리, 서버 상태 화면, 세션 자동 갱신, 데이터 복구·백업, 파일 무결성(SHA-256), 사용자별 요청 제한, 파일 보안 헤더, 자동 오류 보고
+- **화면** — 빠른 설정, 사이드바 구성, 패널 너비 끌어서 조절, 메시지 간격·화면 배율, 저사양 기기 자동 최적화, 모바일 제스처(밀어서 답장 · 뒤로 가기), 스켈레톤 로딩
+- **AI 도우미 (선택)** — 서버에 `ANTHROPIC_API_KEY` 가 있으면 대화 요약 · 대화 기록 질문
+- **자동화 테스트** — 서버 통합 테스트 + 브라우저 테스트 (GitHub Actions)
+
 ### 추가 기능 100가지 · 코드 실행
 
 **전체 목록과 사용법은 [FEATURES.md](FEATURES.md) 에 있습니다.** 주요 기능:
@@ -43,8 +56,12 @@
 | 공지 전용 방에 글쓰기 | ✅ | ❌ |
 | 코드 실행, 북마크, 전달, 검색, 개인 설정 | ✅ | ✅ |
 | 통화 참여 | ✅ | ❌ |
+| 1:1 개인 메시지 | ✅ | ✅ |
+| 내 보관함 (영구 파일), AI 도우미 | ✅ | ❌ |
 
-권한은 `client/js/permissions.js` 와 `server/src/permissions.js` 에서 바꿀 수 있습니다 (두 파일을 같게 유지하세요). 서버도 같은 규칙으로 검사합니다.
+1:1 대화에서는 관리 권한이 있어도 상대의 메시지를 지울 수 없습니다.
+
+권한은 `client/js/permissions.js` 와 `server/src/permissions.js` 에서 바꿀 수 있습니다 (두 파일을 같게 유지하세요 — 다르면 `npm test` 가 실패합니다). 서버도 같은 규칙으로 검사합니다.
 
 ## 앱으로 설치 (모바일 · PC)
 
@@ -69,9 +86,15 @@ client/                 GitHub Pages 에 배포되는 정적 앱 (빌드 과정 
   js/data.js            데이터 계층: 서버 ↔ 기기 저장소 전환, outbox 동기화
   js/db.js              IndexedDB 저장소
   js/call.js            WebRTC 통화
+  js/errorlog.js        자동 오류 기록 · 보고
   js/ui/*.js            화면 구성 요소
 server/                 Socket.IO + MongoDB 서버 (Koyeb 에 Dockerfile 로 배포)
-.github/workflows/      GitHub Pages 자동 배포
+  src/index.js          HTTP API · 실시간 이벤트 · 권한 검사
+  src/ratelimit.js      요청 제한
+  src/memdb.js          메모리 DB (MONGODB_URI=memory, 개발 · 테스트용)
+  src/ai.js             AI 도우미 (선택)
+  test/                 단위 · 통합 · 브라우저 테스트
+.github/workflows/      GitHub Pages 자동 배포, 테스트
 ```
 
 ### 저장 방식 (MongoDB 장애 대비)
@@ -94,7 +117,22 @@ cp .env.example .env      # MONGODB_URI, JWT_SECRET 등 입력
 npm install
 npm start                  # http://localhost:8080
 # 앱의 설정(⚙) → 서버 주소에 http://localhost:8080 입력
+
+# MongoDB 없이 서버 띄우기 (재시작하면 데이터가 사라짐)
+npm run dev:memory
 ```
+
+## 테스트
+
+```bash
+cd server
+npm test                 # 단위 + 통합 테스트 (메모리 DB 로 서버를 띄워 실제 Socket.IO 로 확인)
+# 브라우저 테스트 (Playwright + Chromium 필요)
+npm i --no-save playwright && npx playwright install chromium
+npm run test:e2e         # 스크린샷: npm run test:e2e -- shots
+```
+
+GitHub 에 push 하거나 PR 을 열면 `.github/workflows/test.yml` 이 두 테스트를 자동으로 실행합니다.
 
 ## 배포
 
@@ -119,6 +157,11 @@ npm start                  # http://localhost:8080
    | `APPLE_CLIENT_ID` | Apple Services ID |
    | `FILE_TTL_HOURS` | `72` |
    | `MAX_UPLOAD_MB` | `25` |
+   | `STORAGE_QUOTA_MB` | 내 보관함 사용자당 용량, 기본 `100` |
+   | `CALL_MAX_PARTICIPANTS` | 통화방 최대 인원, 기본 `8` |
+   | `ANTHROPIC_API_KEY` | (선택) AI 도우미. 비우면 꺼짐 (Secret) |
+   | `AI_MODEL` | (선택) 기본 `claude-opus-5-5` |
+   | `TRUST_PROXY` | (선택) 앞단 프록시 수, 기본 `1` (요청 제한에 쓰는 접속 IP 판단용) |
 
 5. **Instance** 는 무료(Free) 또는 원하는 크기를 고르고 배포합니다. 인스턴스는 **1개**로 두세요 (통화 시그널링·접속 상태를 메모리에 두기 때문에 여러 개로 늘리면 서로 연결되지 않습니다).
 6. 배포된 주소(예: `https://chat-site-xxxx.koyeb.app`)를 GitHub 변수 `SERVER_URL` 에 넣습니다. Koyeb 주소는 HTTPS 이고 WebSocket 을 지원합니다.
@@ -153,6 +196,8 @@ Apple Developer Program(유료) 계정이 필요합니다.
 서버는 Google/Apple 의 ID 토큰 서명을 공개키(JWKS)로 검증한 뒤 자체 세션 토큰(30일)을 발급합니다. 클라이언트 ID 가 없으면 해당 로그인 버튼은 비활성화되고 게스트 로그인만 가능합니다.
 
 ## 참고 / 한계
-- **통화**는 서버(시그널링)에 연결되어 있을 때만 됩니다. 참가자끼리 직접 연결(mesh)하므로 4~6명 정도에 적합합니다. 회사망 등 일부 네트워크에서는 TURN 서버가 필요할 수 있습니다 (`client/env.js` 에 `ICE_SERVERS` 로 추가).
+- **통화**는 서버(시그널링)에 연결되어 있을 때만 됩니다. 참가자끼리 직접 연결(mesh)하므로 4~6명 정도에 적합합니다. 인원이 늘면 영상 화질을 자동으로 낮추고, 최대 인원은 `CALL_MAX_PARTICIPANTS` 로 정합니다 (더 큰 통화는 SFU 미디어 서버가 필요). 회사망 등 일부 네트워크에서는 TURN 서버가 필요할 수 있습니다 (`client/env.js` 에 `ICE_SERVERS` 로 추가).
 - 브라우저에서 기기 사본을 지우면(사이트 데이터 삭제, 설정의 “파일 캐시 비우기”) 만료된 파일은 다시 볼 수 없습니다.
-- 첨부파일은 MongoDB GridFS 에 저장됩니다. Atlas 무료 등급은 512MB 이므로 `FILE_TTL_HOURS`, `MAX_UPLOAD_MB` 를 적절히 조절하세요.
+- 첨부파일은 MongoDB GridFS 에 저장됩니다. Atlas 무료 등급은 512MB 이므로 `FILE_TTL_HOURS`, `MAX_UPLOAD_MB`, `STORAGE_QUOTA_MB`(보관함은 만료되지 않음)를 적절히 조절하세요.
+- 서버는 접속 상태 · 통화 정보를 메모리에 두므로 인스턴스를 1개로 유지하세요. 서버 상태는 앱의 ☁ 아이콘(서버 상태)이나 `GET /api/status`(로그인 필요)로 볼 수 있습니다.
+- 자동 오류 보고는 MongoDB `errors` 컬렉션에 30일 동안 보관됩니다 (메시지 내용 · 로그인 토큰은 보내지 않음, 설정에서 끌 수 있음).

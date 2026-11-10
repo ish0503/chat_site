@@ -1,4 +1,4 @@
-// 나만 보는 개인 설정 (이 기기에만 저장): 북마크, 즐겨찾기, 방 알림, 차단, 메모, 리마인더, 임시 저장
+// 나만 보는 개인 설정 (이 기기에만 저장): 북마크, 즐겨찾기, 방 알림, 차단, 메모, 리마인더, 임시 저장, 보관한 방, 검색 기록, 작업 공간
 import { Emitter } from './util.js';
 
 const read = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
@@ -72,9 +72,51 @@ export const reminders = {
 let draftMap = read('cs.drafts', {});
 export const drafts = {
   get: (roomId) => draftMap[roomId] || '',
+  has: (roomId) => !!draftMap[roomId]?.trim(),
   set(roomId, text) {
+    const had = !!draftMap[roomId]?.trim();
     draftMap = { ...draftMap };
     if (text) draftMap[roomId] = text.slice(0, 4000); else delete draftMap[roomId];
-    write('cs.drafts', draftMap); // 자주 바뀌므로 이벤트 없이 저장
+    write('cs.drafts', draftMap); // 자주 바뀌므로 저장만 하고, 임시 저장이 생기거나 없어질 때만 알림 (사이드바 ✏️ 표시)
+    if (had !== !!text?.trim()) personal.emit('cs.drafts');
   },
+};
+
+// ── 보관한 방 (목록에서 숨김, 나가지는 않음) ──
+const ar = store('cs.archived', []);
+export const archived = {
+  list: () => ar.get(),
+  has: (id) => ar.get().includes(id),
+  toggle(id) { ar.set(this.has(id) ? ar.get().filter((x) => x !== id) : [...ar.get(), id]); return this.has(id); },
+  remove(id) { if (this.has(id)) ar.set(ar.get().filter((x) => x !== id)); },
+};
+
+// ── 채팅방별 최근 검색어 ──
+const sh = store('cs.searchHistory', {});
+export const searchHistory = {
+  get: (roomId) => sh.get()[roomId || '_all'] || [],
+  add(roomId, q) {
+    const text = q.trim();
+    if (text.length < 2) return;
+    const k = roomId || '_all';
+    const o = { ...sh.get() };
+    o[k] = [text, ...(o[k] || []).filter((x) => x !== text)].slice(0, 8);
+    sh.set(o);
+  },
+  remove(roomId, q) { const k = roomId || '_all'; const o = { ...sh.get() }; o[k] = (o[k] || []).filter((x) => x !== q); sh.set(o); },
+  clear(roomId) { const o = { ...sh.get() }; delete o[roomId || '_all']; sh.set(o); },
+};
+
+// ── 최근 연 방 (빠른 이동 · 통합 탐색의 '최근') ──
+const rr = store('cs.recentRooms', []);
+export const recentRooms = {
+  list: () => rr.get(),
+  push(id) { if (rr.get()[0] !== id) rr.set([id, ...rr.get().filter((x) => x !== id)].slice(0, 15)); },
+};
+
+// ── 작업 공간 (마지막으로 열었던 방 · 분할 화면 · 패널) 복원 ──
+const ws = store('cs.workspace', {});
+export const workspace = {
+  get: () => ws.get(),
+  set(patch) { ws.set({ ...ws.get(), ...patch }); },
 };

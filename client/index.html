@@ -49,7 +49,12 @@
 </head>
 <body>
   <div id="app">
-    <div class="boot"><div class="spinner"></div></div>
+    <div class="boot" aria-busy="true" aria-label="불러오는 중">
+      <div class="boot-skel">
+        <div class="boot-side"><span class="sk sk-name"></span><span class="sk sk-line"></span><span class="sk sk-line"></span><span class="sk sk-line short"></span><span class="sk sk-line"></span></div>
+        <div class="boot-main"><span class="sk boot-head"></span><div class="skeleton-msg"><span class="sk sk-avatar"></span><div class="sk-lines"><span class="sk sk-name"></span><span class="sk sk-line"></span></div></div><div class="skeleton-msg"><span class="sk sk-avatar"></span><div class="sk-lines"><span class="sk sk-name"></span><span class="sk sk-line short"></span></div></div><div class="skeleton-msg"><span class="sk sk-avatar"></span><div class="sk-lines"><span class="sk sk-name"></span><span class="sk sk-line"></span></div></div></div>
+      </div>
+    </div>
   </div>
   <noscript>이 앱을 사용하려면 JavaScript를 켜 주세요.</noscript>
 </body>

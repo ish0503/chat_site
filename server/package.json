@@ -10,14 +10,22 @@
   },
   "scripts": {
     "start": "node src/index.js",
-    "dev": "node --watch src/index.js"
+    "dev": "node --watch src/index.js",
+    "dev:memory": "MONGODB_URI=memory node --watch src/index.js",
+    "test": "node --test test/*.test.js",
+    "test:e2e": "node test/e2e.mjs"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^1.7.0",
     "cors": "^2.8.5",
     "express": "^4.21.2",
     "jose": "^5.9.6",
+    "mingo": "^6.7.2",
     "mongodb": "^6.12.0",
     "multer": "^2.0.2",
     "socket.io": "^4.8.1"
+  },
+  "devDependencies": {
+    "socket.io-client": "^4.8.1"
   }
 }

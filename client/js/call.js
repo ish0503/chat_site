@@ -45,13 +45,52 @@ export class CallManager extends Emitter {
     }
     this.#ensureAudioCtx();
     this.#watchLevel('local', this.local);
-    const res = await this.data.request('call:join', { roomId, state: this.state });
+    let res;
+    try {
+      res = await this.data.request('call:join', { roomId, state: this.state });
+    } catch (e) {
+      // 입장 실패(인원 초과 등) → 켜 둔 마이크 끄기
+      this.local.getTracks().forEach((t) => t.stop());
+      this.local = null;
+      this.#stopLevel('local');
+      throw e;
+    }
     this.roomId = roomId;
     this.sid = res.sid;
     this.joinedAt = Date.now();
     this.#applyMicGate();
+    this.max = res.max || 0;
+    this.mode = res.mode || 'mesh';
     for (const p of res.peers) this.#peer(p.sid, p.userId);
+    if (res.peers.length >= 5) toast(`참가자가 많아(${res.peers.length + 1}명) 영상 화질을 자동으로 낮춥니다.`, 'info', 5000);
+    this.#adaptBitrate();
     this.emit('update');
+  }
+
+  /**
+   * 직접 연결(mesh) 방식은 참가자 수만큼 같은 영상을 따로 올려 보내므로,
+   * 인원이 늘면 상대마다 보내는 영상의 비트레이트 · 해상도를 낮춰 전체 업로드량을 일정하게 유지합니다.
+   * (SFU 를 도입하면 서버가 영상을 나눠 보내므로 이 조절이 필요 없어집니다: server 의 SFU_URL 참고)
+   */
+  async #adaptBitrate() {
+    const n = this.peers.size;
+    if (!n) return;
+    const UPLOAD_BUDGET = 2_500_000; // 전체 영상 업로드 목표 (bps)
+    const perPeer = Math.max(150_000, Math.min(1_500_000, Math.floor(UPLOAD_BUDGET / n)));
+    const scale = n >= 6 ? 3 : n >= 4 ? 2 : 1;
+    for (const p of this.peers.values()) {
+      for (const sender of p.pc.getSenders()) {
+        if (sender.track?.kind !== 'video') continue;
+        try {
+          const params = sender.getParameters();
+          if (!params.encodings?.length) params.encodings = [{}];
+          const screen = this.state.screen;
+          params.encodings[0].maxBitrate = screen ? Math.max(perPeer, 600_000) : perPeer;
+          params.encodings[0].scaleResolutionDownBy = screen ? 1 : scale;
+          await sender.setParameters(params);
+        } catch { /* 일부 브라우저는 협상 전에 바꿀 수 없음 → 다음 변경 때 적용 */ }
+      }
+    }
   }
 
   #audioConstraints() {
@@ -228,6 +267,7 @@ export class CallManager extends Emitter {
     }
     const sids = new Set(list.map((p) => p.sid));
     for (const sid of [...this.peers.keys()]) if (!sids.has(sid)) this.#closePeer(sid);
+    this.#adaptBitrate();
     this.emit('update');
   }
 
@@ -280,6 +320,7 @@ export class CallManager extends Emitter {
     };
     pc.onconnectionstatechange = () => {
       if (pc.connectionState === 'failed') pc.restartIce?.();
+      if (pc.connectionState === 'connected') this.#adaptBitrate();
       this.emit('update');
     };
     return p;

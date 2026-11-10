@@ -26,6 +26,13 @@ export const config = {
   allowedOrigins: [...new Set(list(process.env.ALLOWED_ORIGINS || '*').map(toOrigin))],
   fileTtlHours: Number(process.env.FILE_TTL_HOURS) || 72,
   maxUploadMb: Number(process.env.MAX_UPLOAD_MB) || 25,
+  // 내 보관함(만료 없는 개인 파일 공간) 사용자당 용량
+  storageQuotaMb: Number(process.env.STORAGE_QUOTA_MB) || 100,
+  // 통화방 최대 인원. 참가자끼리 직접 연결(mesh)하므로 많을수록 각자 업로드가 늘어납니다.
+  callMaxParticipants: Number(process.env.CALL_MAX_PARTICIPANTS) || 8,
+  // 대규모 통화용 SFU(미디어 서버) 주소. 비워 두면 mesh 로 동작합니다. (client/env.js 의 SFU_URL 과 함께 설정)
+  sfuUrl: process.env.SFU_URL || '',
+  version: process.env.APP_VERSION || process.env.KOYEB_GIT_SHA?.slice(0, 8) || 'dev',
 };
 
 console.log(`[config] 허용 출처(ALLOWED_ORIGINS): ${config.allowedOrigins.join(', ')}`);

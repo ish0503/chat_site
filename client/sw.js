@@ -1,9 +1,9 @@
 // 오프라인에서도 앱 화면을 열 수 있도록 앱 파일을 캐시합니다 (네트워크 우선).
-const CACHE = 'chat-site-v7';
+const CACHE = 'chat-site-v8';
 const SHELL = [
   './', './index.html', './env.js', './css/style.css', './manifest.webmanifest', './icons/icon.svg', './icons/icon-192.png', './icons/apple-touch-icon.png',
   './js/app.js', './js/config.js', './js/util.js', './js/markdown.js', './js/db.js', './js/api.js', './js/auth.js',
-  './js/files.js', './js/data.js', './js/call.js', './js/permissions.js', './js/runner.js', './js/install.js', './js/local.js', './js/sounds.js', './js/commands.js',
+  './js/files.js', './js/data.js', './js/call.js', './js/permissions.js', './js/runner.js', './js/install.js', './js/local.js', './js/sounds.js', './js/commands.js', './js/errorlog.js',
   './js/ui/icons.js', './js/ui/common.js', './js/ui/login.js', './js/ui/dialogs.js', './js/ui/errors.js',
   './js/ui/sidebar.js', './js/ui/chat.js', './js/ui/panels.js', './js/ui/callview.js', './js/ui/codeblock.js',
 ];

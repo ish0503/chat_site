@@ -5,10 +5,33 @@ import * as idb from './db.js';
 import * as api from './api.js';
 import * as files from './files.js';
 import { OpError, isConnectivity } from './api.js';
-import { Emitter, uid, kindOf, jwtValid } from './util.js';
+import {
+  Emitter, uid, kindOf, jwtValid, decodeJwt,
+} from './util.js';
 import { can } from './permissions.js';
 
 const PAGE = 50;
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const hex = (buf) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
+
+/** 파일 무결성 검사용 SHA-256 (브라우저가 지원하지 않으면 null) */
+export async function sha256Of(blob) {
+  try {
+    if (!crypto.subtle || blob.size > 200 * 1024 * 1024) return null;
+    return hex(await crypto.subtle.digest('SHA-256', await blob.arrayBuffer()));
+  } catch {
+    return null;
+  }
+}
+
+/** 1:1 대화방 id (server/src/index.js 의 dmIdFor 와 같은 규칙) */
+export async function dmIdFor(a, b) {
+  const text = new TextEncoder().encode([a, b].sort().join('|'));
+  return `dm_${hex(await crypto.subtle.digest('SHA-256', text)).slice(0, 40)}`;
+}
+
+export const isChatRoom = (n) => n?.type === 'text' || n?.type === 'dm';
 
 const preview = (m) => ({
   authorId: m.authorId, author: m.author, content: (m.content || '').slice(0, 120), attachments: (m.attachments || []).length,
@@ -42,7 +65,7 @@ export class DataService extends Emitter {
 
   status() {
     return {
-      mode: this.mode, needsLogin: this.needsLogin, pendingOps: this.pendingOps, serverUrl: config.serverUrl, error: this.lastError,
+      mode: this.mode, needsLogin: this.needsLogin, pendingOps: this.pendingOps, serverUrl: config.serverUrl, error: this.lastError, lastSync: this.lastSync || 0,
     };
   }
 
@@ -80,6 +103,7 @@ export class DataService extends Emitter {
 
   destroy() {
     this.disconnect();
+    clearTimeout(this.refreshTimer);
     this.destroyed = true;
     try { this.bc?.close(); } catch { /* noop */ }
   }
@@ -205,8 +229,11 @@ export class DataService extends Emitter {
       this.online = new Set(res.online);
       this.calls = res.calls || {};
       this.retryDelay = 2000;
+      this.lastSync = Date.now();
+      this.serverClockOffset = res.serverTime ? res.serverTime - Date.now() : 0;
       this.#setStatus('online', { needsLogin: false, lastError: null });
       for (const e of ['nodes', 'users', 'presence', 'calls', 'resync']) this.emit(e);
+      this.refreshSessionSoon();
     } catch (e) {
       console.warn('[data] sync 실패', e);
       this.#setStatus('offline');
@@ -221,23 +248,60 @@ export class DataService extends Emitter {
     if (!s?.connected) return Promise.reject(new OpError('offline'));
     return s.timeout(timeout).emitWithAck(event, payload).then(
       (res) => {
-        if (!res?.ok) throw new OpError(res?.error || 'server_error');
+        if (!res?.ok) throw Object.assign(new OpError(res?.error || 'server_error'), res?.retryAfter ? { retryAfter: res.retryAfter } : {});
         return res;
       },
       (e) => { throw e instanceof OpError ? e : new OpError('timeout'); },
     );
   }
 
+  // ───────────── 세션 갱신 ─────────────
+  /** 서버 세션 토큰이 7일 안에 만료되면 미리 새 토큰을 받습니다 (연결될 때와 6시간마다 확인) */
+  async refreshSessionSoon() {
+    clearTimeout(this.refreshTimer);
+    this.refreshTimer = setTimeout(() => this.refreshSessionSoon(), 6 * 3600_000);
+    const exp = decodeJwt(this.token)?.exp;
+    if (!this.isOnline || !exp || exp * 1000 - Date.now() > 7 * 86400_000) return;
+    try {
+      const { token } = await this.request('session:refresh', {});
+      this.session.serverToken = token;
+      if (this.socket) this.socket.auth.token = token;
+      this.onSession?.(this.session);
+    } catch (e) {
+      console.warn('[data] 세션 갱신 실패', e);
+      if (exp * 1000 - Date.now() < 86400_000) this.emit('notice', { text: '로그인이 곧 만료됩니다. 설정에서 로그아웃 후 다시 로그인해 주세요.', type: 'warn' });
+    }
+  }
+
+  /** 세션 만료 시각 (ms, 없으면 null) */
+  get sessionExpiresAt() {
+    const exp = decodeJwt(this.token)?.exp;
+    return exp ? exp * 1000 : null;
+  }
+
+  // ───────────── 동기화 대기열 (outbox) ─────────────
   async flushOutbox() {
     const run = async () => {
       const ops = await idb.outboxAll();
+      const done = new Set(); // 중복 메시지 방지: 같은 작업(같은 id)이 두 번 쌓여 있으면 한 번만 보냄
       for (let i = 0; i < ops.length; i++) {
         const op = ops[i];
+        const key = op.payload?.id && ['msg:send', 'upload', 'dm:open', 'node:create'].includes(op.op) ? `${op.op}:${op.payload.id}` : null;
         try {
+          if (key && done.has(key)) { await idb.del('outbox', op.seq); continue; }
           if (op.op === 'upload') await this.#uploadStored(op.payload.id);
-          else await this.request(op.op, op.payload);
+          else {
+            const res = await this.request(op.op, op.payload);
+            if (res?.conflict) this.emit('notice', { text: '다른 기기에서 먼저 수정한 메시지를 덮어썼습니다. 이전 내용은 수정 기록에서 볼 수 있어요.', type: 'warn' });
+          }
+          if (key) done.add(key);
           await idb.del('outbox', op.seq);
         } catch (e) {
+          if (e.code === 'rate_limited') { // 요청 제한: 잠시 기다렸다가 같은 작업을 다시 보냄
+            await sleep(Math.min(e.retryAfter || 1000, 10_000));
+            i -= 1;
+            continue;
+          }
           if (isConnectivity(e)) {
             this.pendingOps = ops.length - i;
             this.emit('status', this.status());
@@ -245,7 +309,13 @@ export class DataService extends Emitter {
           }
           console.warn('[data] 동기화할 수 없는 작업을 버립니다', op, e);
           await idb.del('outbox', op.seq);
+          this.dropped = [...(this.dropped || []), { op: op.op, error: e.code, at: Date.now() }].slice(-20);
           if (op.op === 'msg:send') await this.#markFailed(op.payload.id, e.code);
+          // 충돌: 그 사이 다른 곳에서 지워진 메시지를 수정·반응·고정하려 함 → 기기 사본도 지움
+          if (e.code === 'not_found' && ['msg:edit', 'msg:react', 'msg:pin', 'msg:vote'].includes(op.op)) {
+            await this.#removeMessage(op.payload.id, null, true);
+            this.emit('notice', { text: '오프라인일 때 바꾼 메시지가 그 사이 삭제되어 변경을 적용하지 못했습니다.', type: 'warn' });
+          }
         }
       }
       this.pendingOps = 0;
@@ -380,8 +450,41 @@ export class DataService extends Emitter {
   // ───────────── 폴더 / 채팅방 / 통화방 ─────────────
   children(parentId = null) {
     return [...this.nodes.values()]
-      .filter((n) => (n.parentId ?? null) === parentId)
+      .filter((n) => n.type !== 'dm' && (n.parentId ?? null) === parentId)
       .sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || a.createdAt - b.createdAt);
+  }
+
+  // ───────────── 1:1 대화 ─────────────
+  /** 1:1 대화방 목록 (최근 대화 순) */
+  dmList() {
+    return [...this.nodes.values()].filter((n) => n.type === 'dm').sort((a, b) => (b.lastMessageAt || b.createdAt) - (a.lastMessageAt || a.createdAt));
+  }
+
+  /** 1:1 대화 상대 */
+  dmPartner(node) {
+    const id = (node?.members || []).find((x) => x !== this.me.id) || node?.members?.[0];
+    return this.users.get(id) || { id, nickname: '알 수 없음', provider: 'guest' };
+  }
+
+  /** 화면에 보일 방 이름 (1:1 대화는 상대 닉네임) */
+  roomLabel(node) {
+    if (!node) return '';
+    return node.type === 'dm' ? this.dmPartner(node).nickname : node.name;
+  }
+
+  /** 상대와의 1:1 대화방을 열거나 만듦 (오프라인이면 기기에 만들고 나중에 서버와 맞춤) */
+  async openDm(userId) {
+    if (!this.can('directMessage')) throw new OpError('forbidden');
+    if (!userId || userId === this.me.id) throw new OpError('invalid_user');
+    const id = await dmIdFor(this.me.id, userId);
+    if (this.nodes.has(id)) return this.nodes.get(id);
+    const t = Date.now();
+    const node = {
+      id, type: 'dm', name: '', parentId: null, order: 0, members: [this.me.id, userId].sort(), createdBy: this.me.id, createdAt: t, updatedAt: t, lastMessageAt: 0,
+    };
+    const res = await this.#mutate('dm:open', { userId }, () => this.#applyNode(node, true));
+    if (res?.node) await this.#applyNode(res.node);
+    return res?.node || node;
   }
 
   async createNode({ type, name, parentId = null, topic = '', ...extra }) {
@@ -464,7 +567,7 @@ export class DataService extends Emitter {
    * poll: { options: [텍스트], multi }, spoilers: [첨부 인덱스], forward: 전달할 원본 메시지 객체
    */
   async sendMessage(roomId, {
-    content = '', files: fileList = [], replyTo = null, kind = 'text', poll = null, spoilers = [], forward = null,
+    content = '', files: fileList = [], replyTo = null, kind = 'text', poll = null, spoilers = [], forward = null, stored = [],
   }) {
     if (!this.can('sendMessage')) throw new OpError('forbidden');
     const room = this.nodes.get(roomId);
@@ -472,7 +575,7 @@ export class DataService extends Emitter {
     if (kind === 'poll' && !this.can('react')) throw new OpError('forbidden');
     let text = content.trim().slice(0, 4000);
     if (forward) text = forward.kind === 'poll' ? `📊 ${forward.content}` : forward.content || '';
-    if (!text && !fileList.length && !forward?.attachments?.length) return null;
+    if (!text && !fileList.length && !stored.length && !forward?.attachments?.length) return null;
     for (const f of fileList) {
       if (f.size > this.maxUploadBytes) throw new OpError('file_too_large');
     }
@@ -480,7 +583,7 @@ export class DataService extends Emitter {
     const attachments = forward ? (forward.attachments || []).map((a) => ({ ...a, local: false })) : fileList.map((f, i) => ({
       id: uid(), name: f.name || 'file', size: f.size, mime: f.type || 'application/octet-stream', kind: kindOf(f.type), expiresAt: createdAt + this.fileTtlMs, local: true,
       ...(spoilers.includes(i) ? { spoiler: true } : {}),
-    }));
+    })).concat(stored.map((f) => ({ ...f, local: false, stored: true })));
     // 화면에 먼저 보여주고(저장소 쓰기를 기다리지 않음), 저장은 뒤에서 진행
     fileList.forEach((f, i) => files.remember(attachments[i], f));
     const reply = replyTo && typeof replyTo === 'object' ? replyTo : replyTo ? await idb.get('messages', replyTo) : null;
@@ -541,6 +644,7 @@ export class DataService extends Emitter {
       spoilers: msg.attachments.filter((a) => a.spoiler).map((a) => a.id),
       ...(msg.forwardOf ? { forward: { messageId: msg.forwardOf } } : {}),
     };
+    payload.attachments.push(...msg.attachments.filter((a) => a.stored).map((a) => a.id));
     const remaining = msg.attachments.filter((a) => a.local).map((a) => a.id);
     if (this.isOnline) {
       try {
@@ -552,7 +656,10 @@ export class DataService extends Emitter {
         blobsSaved?.then(() => msg.attachments.forEach((a) => files.release(a.id)));
         return;
       } catch (e) {
-        if (!isConnectivity(e)) {
+        if (e.code === 'rate_limited') {
+          // 요청 제한: 실패로 처리하지 않고 대기열에 넣어 잠시 뒤 자동으로 다시 보냄
+          setTimeout(() => this.isOnline && this.flushOutbox(), Math.min(e.retryAfter || 2000, 10_000));
+        } else if (!isConnectivity(e)) {
           await this.#markFailed(msg.id, e.code);
           this.emit('error', e);
           return;
@@ -569,7 +676,10 @@ export class DataService extends Emitter {
     const rec = files.memBlob(id) || (await idb.get('blobs', id));
     if (!rec?.blob) throw new OpError('missing_file');
     if (!this.socket?.connected) throw new OpError('offline');
-    return api.upload(config.serverUrl, this.token, rec.blob, { id, name: rec.name, onProgress });
+    const sha256 = await sha256Of(rec.blob);
+    return api.upload(config.serverUrl, this.token, rec.blob, {
+      id, name: rec.name, onProgress, sha256,
+    });
   }
 
   async retryMessage(id) {
@@ -587,10 +697,12 @@ export class DataService extends Emitter {
     const text = content.trim().slice(0, 4000);
     if (!text && !m.attachments?.length) throw new OpError('empty');
     if (text === m.content) return;
-    const editHistory = [...(m.editHistory || []), { content: m.content, at: m.editedAt || m.createdAt }].slice(-20);
-    await this.#mutate('msg:edit', { id, content: text }, () => this.#applyMessage({
+    const base = m.editedAt || m.createdAt; // 수정 충돌 확인용: 내가 보고 있던 버전
+    const editHistory = [...(m.editHistory || []), { content: m.content, at: base }].slice(-20);
+    const res = await this.#mutate('msg:edit', { id, content: text, base }, () => this.#applyMessage({
       ...m, content: text, editedAt: Date.now(), editHistory,
     }, true));
+    if (res?.conflict) this.emit('notice', { text: '다른 기기에서 먼저 수정된 메시지였습니다. 이전 내용은 수정 기록에서 볼 수 있어요.', type: 'warn' });
   }
 
   /** 투표하기 / 취소 */
@@ -646,6 +758,23 @@ export class DataService extends Emitter {
       return this.#removeMessage(id, m.roomId, true);
     }
     await this.#mutate('msg:delete', { id }, () => this.#removeMessage(id, m.roomId, true));
+  }
+
+  /** 여러 메시지 한 번에 삭제. 지울 권한이 있는 것만 지우고 지운 개수를 돌려줌 */
+  async deleteMessages(ids) {
+    const list = (await Promise.all(ids.map((id) => idb.get('messages', id)))).filter(Boolean);
+    const mayDelete = (m) => m.authorId === this.me.id || (this.nodes.get(m.roomId)?.type !== 'dm' && this.can('deleteAnyMessage'));
+    const ok = list.filter(mayDelete);
+    const unsent = ok.filter((m) => m.pending || m.failed);
+    for (const m of unsent) await this.deleteMessage(m.id);
+    const sent = ok.filter((m) => !m.pending && !m.failed);
+    for (let i = 0; i < sent.length; i += 100) {
+      const chunk = sent.slice(i, i + 100);
+      await this.#mutate('msg:deleteMany', { ids: chunk.map((m) => m.id) }, async () => {
+        for (const m of chunk) await this.#removeMessage(m.id, m.roomId, true);
+      });
+    }
+    return ok.length;
   }
 
   async toggleReaction(id, emoji) {
@@ -731,7 +860,150 @@ export class DataService extends Emitter {
 
   async fetchFile(id) {
     if (!this.isOnline) throw new OpError('offline');
-    return api.fetchFile(config.serverUrl, this.token, id);
+    const { blob, sha256 } = await api.fetchFile(config.serverUrl, this.token, id);
+    // 파일 무결성: 서버가 알려 준 해시와 받은 내용이 다르면 (전송 중 손상) 저장하지 않음
+    if (sha256) {
+      const got = await sha256Of(blob);
+      if (got && got !== sha256) throw new OpError('integrity_failed');
+    }
+    return blob;
+  }
+
+  // ───────────── 내 보관함 (만료 없는 개인 파일) ─────────────
+  async listStoredFiles() {
+    return this.request('files:mine', {});
+  }
+
+  /** 채팅 첨부파일을 만료 전에 보관함으로 복사 */
+  async keepFile(att) {
+    if (!this.can('storage')) throw new OpError('forbidden');
+    return (await this.request('file:keep', { id: att.id }, 60_000)).file;
+  }
+
+  async uploadToStorage(file, onProgress) {
+    if (!this.can('storage')) throw new OpError('forbidden');
+    if (!this.isOnline) throw new OpError('offline');
+    const id = uid();
+    const meta = await api.upload(config.serverUrl, this.token, file, {
+      id, name: file.name, onProgress, keep: true, sha256: await sha256Of(file),
+    });
+    await idb.put('blobs', { id: meta.id, blob: file, name: meta.name, mime: meta.mime, savedAt: Date.now(), stored: true });
+    return meta;
+  }
+
+  async removeStoredFile(id) {
+    await this.request('file:remove', { id });
+    await idb.del('blobs', id);
+    files.forget([id]);
+  }
+
+  // ───────────── AI 도우미 ─────────────
+  get aiEnabled() { return !!this.server?.features?.ai && this.can('useAi'); }
+
+  async askAi(roomId, { mode = 'ask', question = '' } = {}) {
+    if (!this.isOnline) throw new OpError('offline');
+    return this.request('ai:ask', { roomId, mode, question }, 120_000);
+  }
+
+  // ───────────── 서버 상태 · 데이터 복구 ─────────────
+  /** API · DB · WebSocket 상태 (설정 → 서버 상태) */
+  async serverStatus() {
+    const out = { mode: this.mode, pendingOps: this.pendingOps, lastSync: this.lastSync || 0, serverUrl: config.serverUrl, sessionExpiresAt: this.sessionExpiresAt };
+    if (!config.serverUrl) return out;
+    const t0 = performance.now();
+    try {
+      out.health = await api.health(config.serverUrl);
+      out.apiMs = Math.round(performance.now() - t0);
+    } catch (e) {
+      out.apiError = e.code || 'offline';
+      return out;
+    }
+    if (this.token) {
+      try { out.status = await api.status(config.serverUrl, this.token); } catch (e) { out.statusError = e.code; }
+    }
+    if (this.isOnline) out.ws = await this.diagnose();
+    return out;
+  }
+
+  async outboxList() {
+    return idb.outboxAll();
+  }
+
+  async discardOutbox(seq) {
+    const op = (await idb.outboxAll()).find((o) => o.seq === seq);
+    if (!op) return;
+    await idb.del('outbox', seq);
+    if (op.op === 'msg:send') await this.#markFailed(op.payload.id, 'discarded');
+    this.pendingOps = Math.max(0, this.pendingOps - 1);
+    this.emit('status', this.status());
+  }
+
+  /** 기기 데이터 검사: 없어진 방의 메시지, 전송 실패 메시지, 주인 없는 파일 사본 */
+  async inspectLocal({ fix = false } = {}) {
+    const [msgs, blobs, outbox] = await Promise.all([idb.all('messages'), idb.all('blobs'), idb.outboxAll()]);
+    const orphanMsgs = msgs.filter((m) => !this.nodes.has(m.roomId));
+    const failed = msgs.filter((m) => m.failed);
+    const used = new Set(msgs.flatMap((m) => (m.attachments || []).map((a) => a.id)));
+    const keep = new Set(outbox.filter((o) => o.op === 'upload').map((o) => o.payload.id));
+    const orphanBlobs = blobs.filter((b) => !used.has(b.id) && !keep.has(b.id) && !b.stored);
+    if (fix && this.mode !== 'local') {
+      await idb.delMany('messages', orphanMsgs.map((m) => m.id));
+      await idb.delMany('blobs', orphanBlobs.map((b) => b.id));
+      files.forget(orphanBlobs.map((b) => b.id));
+    }
+    return {
+      messages: msgs.length, rooms: this.nodes.size, orphanMsgs: orphanMsgs.length, failed: failed.length, blobs: blobs.length, orphanBlobs: orphanBlobs.length, outbox: outbox.length, local: this.mode === 'local',
+    };
+  }
+
+  /** 서버에서 다시 받기: 기기에 캐시된 메시지(보내지 않은 것 제외)를 지우고 서버 내용으로 다시 채움 */
+  async resyncFromServer() {
+    if (!this.isOnline) throw new OpError('offline');
+    const msgs = await idb.all('messages');
+    await idb.delMany('messages', msgs.filter((m) => !m.pending && !m.failed).map((m) => m.id));
+    await this.#onConnect();
+  }
+
+  /** 백업: 이 기기에 저장된 방 · 메시지 · 사용자 · 대기 작업 · 개인 설정 (파일 내용 제외) */
+  async exportBackup() {
+    const [nodes, messages, users, outbox] = await Promise.all([idb.all('nodes'), idb.all('messages'), idb.all('users'), idb.outboxAll()]);
+    const personalKeys = Object.keys(localStorage).filter((k) => k.startsWith('cs.') && !['cs.session'].includes(k));
+    const personal = Object.fromEntries(personalKeys.map((k) => [k, localStorage.getItem(k)]));
+    return {
+      format: 'chat_site-backup', version: 1, exportedAt: Date.now(), user: { id: this.me.id, nickname: this.me.nickname }, nodes, messages, users, outbox, personal,
+    };
+  }
+
+  /** 백업 복원: 기기에 없는 메시지 · 방만 추가하고, 보내지 못했던 작업은 다시 대기열에 넣음 */
+  async importBackup(b) {
+    if (b?.format !== 'chat_site-backup' || !Array.isArray(b.messages)) throw new OpError('invalid_backup');
+    const have = new Set((await idb.all('messages')).map((m) => m.id));
+    const add = b.messages.filter((m) => m?.id && m.roomId && !have.has(m.id));
+    await idb.putMany('messages', add);
+    const newNodes = (b.nodes || []).filter((n) => n?.id && !this.nodes.has(n.id));
+    if (this.mode === 'local' || !config.serverUrl) {
+      await idb.putMany('nodes', newNodes);
+      for (const n of newNodes) this.nodes.set(n.id, n);
+    }
+    await idb.putMany('users', (b.users || []).filter((u) => u?.id && !this.users.has(u.id)));
+    let requeued = 0;
+    if (b.user?.id === this.me.id) {
+      const queued = new Set((await idb.outboxAll()).map((o) => `${o.op}:${o.payload?.id}`));
+      for (const o of b.outbox || []) {
+        if (!o?.op || queued.has(`${o.op}:${o.payload?.id}`) || o.op === 'upload') continue;
+        await idb.outboxAdd({ op: o.op, payload: o.payload });
+        requeued += 1;
+      }
+    }
+    for (const [k, v] of Object.entries(b.personal || {})) {
+      if (k.startsWith('cs.') && k !== 'cs.session' && localStorage.getItem(k) == null) try { localStorage.setItem(k, v); } catch { /* noop */ }
+    }
+    this.pendingOps = (await idb.outboxAll()).length;
+    this.emit('nodes');
+    this.emit('resync');
+    this.emit('status', this.status());
+    if (requeued && this.isOnline) this.flushOutbox();
+    return { messages: add.length, nodes: newNodes.length, requeued };
   }
 
   // ───────────── 프로필 ─────────────

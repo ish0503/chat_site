@@ -1,0 +1,52 @@
+name: Tests
+
+# 서버 단위·통합 테스트 + 브라우저 종단 간 테스트 (MongoDB 없이 메모리 DB 로 실행)
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  server:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm ci
+      - name: 단위 · 통합 테스트 (권한 규칙, 요청 제한, XSS, 1:1 대화 권한, 파일 무결성, 보관함 …)
+        run: npm test
+
+  e2e:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm ci
+      - name: Playwright 설치
+        run: npm i --no-save playwright && npx playwright install --with-deps chromium
+      - name: 브라우저 테스트 (로그인 → 채팅 → 1:1 대화 → 분할 화면 → 보관함 → 모바일)
+        run: npm run test:e2e -- e2e-shots
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-screenshots
+          path: server/e2e-shots
+          if-no-files-found: ignore

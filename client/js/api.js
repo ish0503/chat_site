@@ -64,10 +64,13 @@ export async function exchange(base, session) {
   throw new OpError('auth_needed');
 }
 
-export function upload(base, token, blob, { id, name, onProgress } = {}) {
+export function upload(base, token, blob, {
+  id, name, onProgress, sha256, keep,
+} = {}) {
   return new Promise((resolve, reject) => {
     const x = new XMLHttpRequest();
-    x.open('POST', `${base}/api/upload?id=${encodeURIComponent(id)}&name=${encodeURIComponent(name || 'file')}`);
+    const q = new URLSearchParams({ id, name: name || 'file', ...(sha256 ? { sha256 } : {}), ...(keep ? { keep: '1' } : {}) });
+    x.open('POST', `${base}/api/upload?${q}`);
     x.setRequestHeader('Authorization', `Bearer ${token}`);
     x.responseType = 'json';
     x.upload.onprogress = (e) => e.lengthComputable && onProgress?.(e.loaded / e.total);
@@ -89,7 +92,25 @@ export async function fetchFile(base, token, id) {
   const r = await req(`${base}/api/files/${encodeURIComponent(id)}`, { headers: { Authorization: `Bearer ${token}` } }, 3 * 60_000);
   if (r.status === 410 || r.status === 404) throw new OpError('expired', r.status);
   if (!r.ok) throw await errorFrom(r);
-  return r.blob();
+  return { blob: await r.blob(), sha256: r.headers.get('X-Content-SHA256') };
+}
+
+/** 서버 상태 (로그인 필요) */
+export async function status(base, token) {
+  const r = await req(`${base}/api/status`, { headers: { Authorization: `Bearer ${token}` } }, 8000);
+  if (!r.ok) throw await errorFrom(r);
+  return r.json();
+}
+
+/** 자동 오류 보고 */
+export async function reportErrors(base, token, reports) {
+  const r = await req(`${base}/api/errors`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    body: JSON.stringify({ reports }),
+  }, 8000);
+  if (!r.ok) throw await errorFrom(r);
+  return r.json();
 }
 
 export const loadSocketIo = () => (window.io ? Promise.resolve() : loadScript(config.socketIoSrc));
