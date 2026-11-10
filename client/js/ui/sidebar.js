@@ -12,6 +12,7 @@ import {
   favorites, roomNotify, personal, archived, drafts,
 } from '../local.js';
 import { errorText } from './errors.js';
+import { convertDialog } from './board.js';
 import { install, installable, openInstall } from '../install.js';
 
 const COLLAPSED_KEY = 'cs.collapsed';
@@ -81,13 +82,14 @@ export function createSidebar(ctx) {
       items.push({ label: collapsed.has(node.id) ? '펼치기' : '접기', icon: 'chevronDown', onClick: () => toggle(node.id) });
     } else {
       const notify = roomNotify.get(node.id);
-      const chat = node.type === 'text' || node.type === 'dm';
+      const chat = ['text', 'dm', 'code', 'board'].includes(node.type);
       items.push(
         node.type === 'dm' ? { label: '상대 프로필', icon: 'user', onClick: () => profileDialog(ctx, data.dmPartner(node).id) } : null,
         { label: favorites.has(node.id) ? '즐겨찾기 해제' : '즐겨찾기에 추가', icon: 'star', onClick: () => { const on = favorites.toggle(node.id); toast(on ? '⭐ 즐겨찾기에 추가했습니다.' : '즐겨찾기에서 뺐습니다.'); } },
         { label: archived.has(node.id) ? '보관 해제 (목록에 다시 표시)' : '보관하기 (목록에서 숨김)', icon: 'archive', onClick: () => { const on = archived.toggle(node.id); toast(on ? '🗄 보관했습니다. 사이드바 아래 "보관한 방"에서 볼 수 있어요.' : '보관을 해제했습니다.'); } },
         chat && !ctx.isSplitOpen?.(node.id) ? { label: '분할 화면으로 열기', icon: 'columns', onClick: () => ctx.openSplit(node.id) } : null,
         chat ? { label: '읽음으로 표시', icon: 'check', onClick: () => ctx.markRead(node.id) } : null,
+        chat && data.can('editWorkspace') ? { label: '대화를 보드로 변환', icon: 'grid', onClick: () => convertDialog(ctx, { roomId: node.id }) } : null,
         chat && data.aiEnabled ? { label: 'AI 요약 · 질문', icon: 'sparkle', onClick: () => aiDialog(ctx, node.id) } : null,
         chat ? 'sep' : null,
         chat ? { label: `${notify === 'all' ? '✓ ' : ''}알림: 모든 메시지`, icon: 'bell', onClick: () => roomNotify.set(node.id, 'all') } : null,
@@ -197,7 +199,7 @@ export function createSidebar(ctx) {
     },
     isFolder ? icon(open ? 'chevronDown' : 'chevron', 14, 'chev') : null,
     node.type === 'dm' ? avatar(data.dmPartner(node), 22, { presence: data.presenceOf(data.dmPartner(node).id) })
-      : node.emoji && !isFolder ? h('span', { class: 'node-emoji' }, node.emoji) : icon(isFolder ? (open ? 'folderOpen' : 'folder') : node.type === 'voice' ? 'voice' : 'hash', 18, `node-icon${node.color ? ' colored' : ''}`),
+      : node.emoji && !isFolder ? h('span', { class: 'node-emoji' }, node.emoji) : icon(isFolder ? (open ? 'folderOpen' : 'folder') : { voice: 'voice', code: 'code', board: 'grid' }[node.type] || 'hash', 18, `node-icon${node.color ? ' colored' : ''}`),
     h('span', { class: 'tree-name ellipsis' }, isFolder && node.emoji ? `${node.emoji} ${node.name}` : data.roomLabel(node)),
     draft ? h('span', { class: 'draft-mark', title: '보내지 않은 임시 저장 글이 있습니다' }, icon('pencil', 13)) : null,
     node.readonly ? h('span', { class: 'dim', title: '공지 전용' }, '📢') : null,
@@ -230,7 +232,7 @@ export function createSidebar(ctx) {
   }
 
   const pathOf = (n) => { const p = []; for (let c = data.nodes.get(n.parentId); c; c = data.nodes.get(c.parentId)) p.unshift(c.name); return p.join(' / '); };
-  const isChat = (n) => n.type === 'text' || n.type === 'dm';
+  const isChat = (n) => ['text', 'dm', 'code', 'board'].includes(n.type);
 
   // 접을 수 있는 구역 제목
   const sectionOpen = new Set(JSON.parse(localStorage.getItem('cs.sectionsOpen') || '["favorites","dms","rooms"]'));

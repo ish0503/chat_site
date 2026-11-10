@@ -256,6 +256,12 @@ function script(src) {
   });
 }
 
+/** 구문 강조 라이브러리 불러오기 (코드 편집기용). 못 불러오면 null */
+export function loadHighlighter() {
+  hljsP = hljsP || script(HLJS);
+  return hljsP.then(() => window.hljs || null, () => null);
+}
+
 export async function highlight(codeEl, lang) {
   try {
     hljsP = hljsP || script(HLJS);

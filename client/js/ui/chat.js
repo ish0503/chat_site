@@ -21,6 +21,8 @@ import {
 } from './dialogs.js';
 import { errorText } from './errors.js';
 import { enhance } from './codeblock.js';
+import { convertDialog } from './board.js';
+import { saveCodeDialog } from './workspace.js';
 
 const GROUP_MS = 7 * 60_000;
 const AUTO_FETCH_BYTES = 20 * 1024 * 1024;
@@ -53,10 +55,13 @@ export function createChatView(ctx, { split = false } = {}) {
     class: 'icon-btn desktop-only split-btn', title: split ? '분할 화면 닫기' : '분할 화면으로 다른 방 열기', 'aria-label': split ? '분할 화면 닫기' : '분할 화면',
     onclick: () => (split ? ctx.closeSplit() : ctx.pickSplit()),
   }, icon(split ? 'x' : 'columns'));
+  // 코드 작업실 · 보드 방의 채팅에서 작업 공간으로 돌아가기
+  const wsBtn = h('button', { class: 'btn small secondary ws-back-btn', hidden: true, title: '작업 공간으로', onclick: () => ctx.openRoom(st.roomId, { workspace: true }) });
   const header = h('header', { class: 'room-head' },
     split ? null : h('button', { class: 'icon-btn mobile-only', 'aria-label': '메뉴 열기', onclick: () => ctx.openDrawer() }, icon('menu')),
     title,
     h('div', { class: 'room-actions' },
+      wsBtn,
       splitBtn,
       split ? null : pinBtn,
       h('button', { class: 'icon-btn', title: '검색', 'aria-label': '메시지 검색', onclick: () => ctx.togglePanel('search') }, icon('search')),
@@ -118,6 +123,9 @@ export function createChatView(ctx, { split = false } = {}) {
   function renderTitle() {
     const room = data.nodes.get(st.roomId);
     if (!room) return;
+    const ws = room.type === 'code' || room.type === 'board';
+    wsBtn.hidden = !ws || split;
+    if (ws) wsBtn.replaceChildren(icon(room.type === 'code' ? 'code' : 'grid', 16), h('span', {}, room.type === 'code' ? ' 코드' : ' 보드'));
     if (room.type === 'dm') {
       const u = data.dmPartner(room);
       const pres = data.presenceOf(u.id);
@@ -132,9 +140,9 @@ export function createChatView(ctx, { split = false } = {}) {
     for (let p = data.nodes.get(room.parentId); p; p = data.nodes.get(p.parentId)) path.unshift(p.name);
     const tags = [room.readonly ? '📢 공지' : null, room.slowmode ? `🐢 ${room.slowmode}초` : null].filter(Boolean).join(' · ');
     title.replaceChildren(
-      room.emoji ? h('span', { class: 'room-emoji' }, room.emoji) : icon('hash', 22, 'dim'),
+      room.emoji ? h('span', { class: 'room-emoji' }, room.emoji) : icon(room.type === 'code' ? 'code' : room.type === 'board' ? 'grid' : 'hash', 22, 'dim'),
       h('div', { class: 'room-title-text' },
-        h('h2', { class: 'ellipsis' }, room.name),
+        h('h2', { class: 'ellipsis' }, ws ? `${room.name} · 채팅` : room.name),
         room.topic || path.length || tags
           ? h('span', { class: 'room-topic ellipsis', title: room.topic || '' }, [path.join(' / '), tags, room.topic].filter(Boolean).join(' · '))
           : null),
@@ -402,6 +410,7 @@ export function createChatView(ctx, { split = false } = {}) {
         const text = chosen.map((m) => `[${fmtFull(m.createdAt)}] ${authorOf(m).nickname}: ${m.content || (m.attachments || []).map((a) => `📎 ${a.name}`).join(' ')}`).join('\n');
         navigator.clipboard?.writeText(text).then(() => toast(`${chosen.length}개 메시지를 복사했습니다.`), () => toast('복사하지 못했습니다.', 'error'));
       }),
+      data.can('editWorkspace') ? btn('grid', '보드로', () => { const list = chosen.slice(); stopSelect(); convertDialog(ctx, { roomId: st.roomId, messages: list }); }) : null,
       btn('bookmark', '저장', () => {
         let n = 0;
         for (const m of chosen) if (!bookmarks.has(m.id)) { bookmarks.toggle(m); n += 1; }
@@ -526,6 +535,8 @@ export function createChatView(ctx, { split = false } = {}) {
     node.addEventListener('touchcancel', cancel);
   }
 
+  /** 메시지 안의 첫 코드 블록 */
+  const codeIn = (m) => { const x = (m.content || '').match(/```(?:([\w+#.-]{1,20})\n)?([\s\S]*?)```/); return x && x[2].trim() ? { lang: x[1] || '', code: x[2].replace(/^\n/, '') } : null; };
   const canDeleteOthers = () => data.nodes.get(st.roomId)?.type !== 'dm' && data.can('deleteAnyMessage');
   const messageLink = (m) => `${location.origin}${location.pathname}#/room/${m.roomId}/m/${m.id}`;
 
@@ -560,6 +571,8 @@ export function createChatView(ctx, { split = false } = {}) {
       m.failed ? { label: '다시 보내기', icon: 'refresh', onClick: () => data.retryMessage(m.id) } : null,
       { label: '작성자 프로필', icon: 'user', onClick: () => profileDialog(ctx, m.authorId) },
       { label: st.onlyAuthor === m.authorId ? '필터 해제 (모든 메시지 보기)' : '이 사람의 메시지만 보기', icon: 'user', onClick: () => setAuthorFilter(st.onlyAuthor === m.authorId ? null : m.authorId) },
+      data.can('editWorkspace') && sent ? { label: '보드에 카드로 추가', icon: 'grid', onClick: () => convertDialog(ctx, { roomId: m.roomId, messages: [m] }) } : null,
+      data.can('editWorkspace') && codeIn(m) ? { label: '코드 작업실에 파일로 저장', icon: 'code', onClick: () => saveCodeDialog(ctx, codeIn(m)) } : null,
       { label: '여러 개 선택', icon: 'check', onClick: () => startSelect(m.id) },
       mine || canDeleteOthers() ? 'sep' : null,
       mine || canDeleteOthers() ? { label: '삭제', icon: 'trash', danger: true, onClick: () => remove(m) } : null,

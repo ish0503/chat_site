@@ -249,3 +249,56 @@ test('요청 제한: 메시지를 너무 빨리 보내면 rate_limited 와 재�
   assert.equal(limited.error, 'rate_limited');
   assert.ok(limited.retryAfter > 0);
 });
+
+test('작업 공간: 코드 파일 저장 · 동시 편집 충돌 · 버전 기록 · 하위 삭제 · 권한', async () => {
+  const room = (await A.req('node:create', { type: 'code', name: '코드방' })).node;
+  assert.equal(room.type, 'code');
+  const [proj, dir, file] = [uuid(), uuid(), uuid()];
+  const many = await A.req('ws:putMany', { roomId: room.id, items: [
+    { id: proj, kind: 'project', name: '내 프로젝트' },
+    { id: dir, kind: 'folder', name: 'src', parentId: proj },
+    { id: file, kind: 'file', name: 'main.js', parentId: dir, content: 'console.log(1)' },
+  ] });
+  assert.equal(many.items.length, 3);
+  await B.waitFor('ws:upsert', (e) => e.roomId === room.id && e.items.some((i) => i.id === file));
+  // 게스트는 볼 수는 있지만 고칠 수 없음
+  assert.equal((await G.req('ws:list', { roomId: room.id })).items.length, 3);
+  assert.equal((await G.req('ws:put', { roomId: room.id, item: { id: file, kind: 'file', content: 'x' } })).error, 'forbidden');
+  const e1 = await A.req('ws:put', { roomId: room.id, item: { id: file, kind: 'file', content: 'console.log(2)', baseRev: 1 } });
+  assert.equal(e1.item.rev, 2);
+  assert.equal(e1.conflict, undefined);
+  const e2 = await B.req('ws:put', { roomId: room.id, item: { id: file, kind: 'file', content: 'console.log(3)', baseRev: 1 } });
+  assert.equal(e2.conflict, true);
+  const hist = await A.req('ws:history', { roomId: room.id, id: file });
+  assert.deepEqual(hist.history.map((h) => h.content), ['console.log(1)', 'console.log(2)']);
+  // 폴더를 자기 안의 폴더로 옮길 수 없음
+  const sub = uuid();
+  await A.req('ws:put', { roomId: room.id, item: { id: sub, kind: 'folder', name: 'sub', parentId: dir } });
+  assert.equal((await A.req('ws:put', { roomId: room.id, item: { id: dir, kind: 'folder', parentId: sub } })).error, 'invalid_move');
+  // 이름의 경로 문자는 바뀜, 채팅도 가능
+  const renamed = await A.req('ws:put', { roomId: room.id, item: { id: file, kind: 'file', name: '../evil.js' } });
+  assert.equal(renamed.item.name, '.._evil.js');
+  assert.equal((await A.req('msg:send', { id: uuid(), roomId: room.id, content: '코드방 채팅' })).ok, true);
+  const del = await A.req('ws:delete', { roomId: room.id, ids: [dir] });
+  assert.deepEqual(del.ids.sort(), [dir, file, sub].sort());
+  assert.equal((await A.req('ws:list', { roomId: room.id })).items.length, 1);
+  // 일반 채팅방에는 작업 공간이 없음
+  assert.equal((await A.req('ws:list', { roomId })).error, 'room_not_found');
+});
+
+test('작업 공간: 보드 카드와 방 삭제 시 정리', async () => {
+  const room = (await A.req('node:create', { type: 'board', name: '보드', view: 'kanban' })).node;
+  assert.equal(room.view, 'kanban');
+  const c1 = uuid(); const c2 = uuid();
+  await A.req('ws:put', { roomId: room.id, item: { id: c1, kind: 'card', text: '주제', color: '#ffcc00', status: 'todo', x: 10, y: 20 } });
+  const r = await A.req('ws:put', { roomId: room.id, item: { id: c2, kind: 'card', text: '의견', parentId: c1, stance: 'pro', status: 'bogus' } });
+  assert.equal(r.item.stance, 'pro');
+  assert.equal(r.item.status, null);
+  const moved = await B.req('ws:put', { roomId: room.id, item: { id: c1, kind: 'card', status: 'done' } });
+  assert.equal(moved.item.status, 'done');
+  assert.equal(moved.item.text, '주제', '보내지 않은 값은 그대로');
+  assert.equal((await A.req('node:update', { id: room.id, view: 'mindmap' })).node.view, 'mindmap');
+  await A.req('node:delete', { id: room.id });
+  assert.equal((await A.req('ws:list', { roomId: room.id })).error, 'room_not_found');
+  assert.equal((await A.req('ai:board', { roomId })).error, 'ai_disabled');
+});

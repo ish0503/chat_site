@@ -41,12 +41,14 @@ async function open(user, name) {
   await ctx.route(/cdn\.jsdelivr\.net\/npm\/socket\.io-client/, (r) => r.fulfill({ body: sio, contentType: 'application/javascript' }));
   await ctx.route(/accounts\.google\.com|appleid\.cdn-apple|fonts\.|ytimg|cdnjs/, (r) => r.abort());
   await ctx.addInitScript(([u, t, b]) => {
-    localStorage.setItem('cs.session', JSON.stringify({ user: u, serverToken: t, serverUrl: b }));
-    localStorage.setItem('cs.serverUrl', b);
+    try { // 샌드박스 iframe(코드 실행 미리보기)에서는 localStorage 를 쓸 수 없음
+      localStorage.setItem('cs.session', JSON.stringify({ user: u, serverToken: t, serverUrl: b }));
+      localStorage.setItem('cs.serverUrl', b);
+    } catch { /* noop */ }
   }, [user.user, user.token, base]);
   const page = await ctx.newPage();
   page.on('pageerror', (e) => errors.push(`${name}: ${e.message}`));
-  page.on('console', (m) => { if (m.type() === 'error') errors.push(`${name} console: ${m.text()}`); });
+  page.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) errors.push(`${name} console: ${m.text()}`); }); // 테스트에서 막아 둔 CDN 요청은 제외
   await page.goto(appUrl);
   return page;
 }
@@ -196,6 +198,162 @@ try {
     await shot(a, 'data-tools');
     await a.keyboard.press('Escape');
     await a.keyboard.press('Escape');
+  });
+  // ── 코드 작업실 · 보드 ──
+  const main = (page) => page.locator('.main-content');
+  const createRoom = async (page, typeLabel, name) => {
+    await page.click('button[aria-label="채팅방·통화방·폴더 만들기"]');
+    await page.click(`.type-opt:has-text("${typeLabel}")`);
+    await page.fill('.modal input.input', name);
+    await page.click('.modal button.btn.primary');
+  };
+  await step('code room: project from template, explorer, HTML preview', async () => {
+    if (await a.locator('.split-pane').count()) await a.keyboard.press('Control+\\');
+    await createRoom(a, '코드 작업실', '코딩방');
+    await a.waitForSelector('.ide-home', { timeout: 5000 });
+    await a.click('.ide-home button:has-text("새 프로젝트")');
+    await a.fill('.modal input.input', '웹 프로젝트');
+    await a.click('.modal button.btn.primary');
+    await a.waitForSelector('.ide-row:has-text("index.html")', { timeout: 5000 });
+    await a.waitForSelector('.ide-row:has-text("style.css")');
+    await a.click('.ide-bar button:has-text("실행")');
+    const frame = a.frameLocator('.ide-out iframe.run-preview');
+    await frame.locator('#btn').click({ timeout: 8000 });
+    await a.waitForSelector('.ide-out .run-line:has-text("클릭 1")', { timeout: 5000 });
+    if ((await frame.locator('#out').textContent()) !== '1번 눌렀어요') throw new Error('script not inlined');
+    const pad = await frame.locator('body').evaluate((el) => getComputedStyle(el).paddingTop);
+    if (pad !== '24px') throw new Error(`css not inlined: ${pad}`);
+    await shot(a, 'ide');
+  });
+  await step('code room: edit, autosave, live update for another user, version history', async () => {
+    await b.click('.tree-row.code');
+    await b.click('.project-card');
+    await b.click('.ide-row:has-text("main.js")');
+    await a.click('.ide-row:has-text("main.js")');
+    await a.click('.ed-input');
+    await a.keyboard.press('Control+End');
+    await a.keyboard.type('\n// 앨리스가 추가함');
+    await b.waitForFunction(() => document.querySelector('.ed-input')?.value.includes('앨리스가 추가함'), null, { timeout: 8000 });
+    await a.waitForSelector('.ide-tab-x:not(.dirty)');
+    await a.click('.ide-row:has-text("main.js")', { button: 'right' });
+    await a.click('.menu-item:has-text("버전 기록")');
+    await a.waitForSelector('.modal .history-item', { timeout: 5000 });
+    await a.keyboard.press('Escape');
+  });
+  await step('code room: new file in folder, editor keys, JS modules run, share to chat', async () => {
+    await a.click('button[aria-label="새 파일"]');
+    await a.fill('.modal input.input', 'lib/util.js');
+    await a.click('.modal button.btn.primary');
+    await a.waitForSelector('.ide-row.folder:has-text("lib")');
+    await a.click('.ed-input');
+    await a.keyboard.type('export function twice(x) {\nreturn x * 2;');
+    const v = await a.inputValue('.ed-input');
+    if (v !== 'export function twice(x) {\n  return x * 2;\n}') throw new Error(`auto indent/close: ${JSON.stringify(v)}`);
+    await a.click('button[aria-label="새 파일"]');
+    await a.fill('.modal input.input', 'calc.js');
+    await a.click('.modal button.btn.primary');
+    await a.waitForSelector('.ide-tab.active:has-text("calc.js")');
+    await a.click('.ed-input');
+    await a.keyboard.type("import { twice } from './util.js';\nconsole.log('결과', twice(21));");
+    await a.keyboard.press('Control+Enter');
+    await a.waitForSelector('.ide-out .run-line:has-text("결과 42")', { timeout: 8000 });
+    await a.click('button[aria-label="프로젝트 메뉴"]');
+    await a.click('.menu-item:has-text("채팅으로 보내기")');
+    await b.waitForSelector('.tree-row.code .unread-badge', { timeout: 5000 });
+  });
+  await step('code room: zip export', async () => {
+    const [dl] = await Promise.all([a.waitForEvent('download', { timeout: 5000 }), (async () => { await a.click('button[aria-label="프로젝트 메뉴"]'); await a.click('.menu-item:has-text("ZIP")'); })()]);
+    const { execFileSync } = await import('node:child_process');
+    const listing = execFileSync('python3', ['-c', 'import zipfile,sys;print("\\n".join(zipfile.ZipFile(sys.argv[1]).namelist()))', await dl.path()]).toString();
+    if (!listing.includes('웹 프로젝트/lib/util.js') || !listing.includes('웹 프로젝트/index.html')) throw new Error(`zip: ${listing}`);
+  });
+  await step('code room: chat view and back to workspace', async () => {
+    await a.click('.ws-chat-btn');
+    await a.waitForSelector('.chat-view .msg:has-text("calc.js")', { timeout: 5000 });
+    await a.click('.ws-back-btn');
+    await a.waitForSelector('.ide-project');
+  });
+  await step('board room: cards in all 7 views', async () => {
+    await createRoom(a, '보드', '기획 보드');
+    await a.waitForSelector('.view-tree', { timeout: 5000 });
+    const addQuick = async (text) => { await a.fill('.quick-add-input >> nth=-1', text); await a.keyboard.press('Enter'); await a.waitForSelector(`.card:has-text("${text}")`); };
+    await addQuick('게임 만들기');
+    await a.hover('.card:has-text("게임 만들기")');
+    await a.click('.card:has-text("게임 만들기") button[title="하위 카드 추가"]');
+    await a.fill('.modal input.input', '전쟁 시뮬레이션');
+    await a.click('.modal button.btn.primary');
+    await a.waitForSelector('.card:has-text("전쟁 시뮬레이션")');
+    await a.hover('.card:has-text("게임 만들기")');
+    await a.click('.card:has-text("게임 만들기") button[title="하위 카드 추가"]');
+    await a.fill('.modal input.input', '무역과 외교');
+    await a.click('.modal button.btn.primary');
+    await a.waitForSelector('.card:has-text("무역과 외교")');
+    await shot(a, 'board-tree');
+    for (const [label, sel] of [['포스트잇', '.view-sticky .card.note'], ['마인드맵', '.view-mindmap .mind-node'], ['브랜치', '.view-branch .branch-graph circle'], ['타임라인', '.view-timeline .tl-item'], ['토론', '.view-debate .debate-col'], ['칸반', '.view-kanban .kanban-col']]) {
+      await a.click(`.board-tab:has-text("${label}")`);
+      await a.waitForSelector(sel, { timeout: 5000 });
+      await a.waitForTimeout(150);
+      await shot(a, `board-${label}`);
+    }
+    // 칸반: 미분류 → 다음 칸으로 옮기면 다른 사용자에게도 반영
+    await a.fill('.kanban-col.st-todo .quick-add-input', '지도 그리기');
+    await a.keyboard.press('Enter');
+    await a.waitForSelector('.kanban-col.st-todo .card:has-text("지도 그리기")');
+    await a.click('.kanban-col.st-todo .card:has-text("지도 그리기") button[title="진행 중(으)로"]');
+    await a.waitForSelector('.kanban-col.st-doing .card:has-text("지도 그리기")');
+    await b.click('.tree-row.board');
+    await b.click('.board-tab:has-text("칸반")');
+    await b.waitForSelector('.kanban-col.st-doing .card:has-text("지도 그리기")', { timeout: 5000 });
+    // 포스트잇: 끌어서 옮긴 위치가 저장됨
+    await a.click('.board-tab:has-text("포스트잇")');
+    const note = a.locator('.card.note', { hasText: '지도 그리기' });
+    const box = await note.boundingBox();
+    await a.mouse.move(box.x + 60, box.y + 20); await a.mouse.down(); await a.mouse.move(box.x + 260, box.y + 140, { steps: 5 }); await a.mouse.up();
+    await a.waitForTimeout(400);
+    const after = await note.boundingBox();
+    if (Math.abs(after.x - box.x - 200) > 12) throw new Error(`note did not move: ${after.x - box.x}`);
+  });
+  await step('convert chat to board (rule-based, preview then approve)', async () => {
+    await a.click('.tree-row.text', { button: 'right' });
+    await a.click('.menu-item:has-text("대화를 보드로 변환")');
+    await a.waitForSelector('.convert-modal');
+    await a.selectOption('.convert-modal select >> nth=0', 'branch');
+    await a.click('.convert-modal button.btn.primary');
+    await a.waitForSelector('.convert-row', { timeout: 5000 });
+    const rows = await a.locator('.convert-row').count();
+    if (rows < 4) throw new Error(`preview rows ${rows}`);
+    await shot(a, 'convert');
+    await a.click('.convert-modal button.btn.primary');
+    await a.waitForSelector('.view-branch .branch-row', { timeout: 8000 });
+    // 답장은 하위 카드가 되고, 카드에서 원본 메시지로 이동할 수 있음
+    await a.waitForSelector('.view-branch .card:has-text("1번에 대한 답장")');
+    await a.waitForTimeout(500);
+    await shot(a, 'board-from-chat');
+    await a.click('.view-branch .card:has-text("1번에 대한 답장") .card-chip.link');
+    await a.waitForSelector('.chat-view .msg.flash:has-text("1번에 대한 답장")', { timeout: 5000 });
+  });
+  await step('iPhone layout: composer sits at the bottom, page cannot shift up', async () => {
+    const { devices } = createRequire(import.meta.url)('playwright');
+    const ctx = await browser.newContext({ ...devices['iPhone 13'] });
+    await ctx.route(/cdn\.jsdelivr\.net\/npm\/socket\.io-client/, (r) => r.fulfill({ body: sio, contentType: 'application/javascript' }));
+    await ctx.route(/accounts\.google\.com|appleid\.cdn-apple|fonts\.|ytimg|cdnjs/, (r) => r.abort());
+    await ctx.addInitScript(([u, t, bb]) => { localStorage.setItem('cs.session', JSON.stringify({ user: u, serverToken: t, serverUrl: bb })); localStorage.setItem('cs.serverUrl', bb); }, [B.user, B.token, base]);
+    const p = await ctx.newPage();
+    p.on('pageerror', (e) => errors.push(`iphone: ${e.message}`));
+    await p.goto(appUrl);
+    await p.waitForSelector('.conn-online', { state: 'attached', timeout: 10000 });
+    await p.evaluate(() => { location.hash = ''; });
+    await p.waitForSelector('.composer-box', { timeout: 8000 });
+    const m = await p.evaluate(() => {
+      const box = document.querySelector('.composer-box').getBoundingClientRect();
+      window.scrollTo(0, 200);
+      return { gap: innerHeight - box.bottom, layout: document.querySelector('.layout').getBoundingClientRect().height, inner: innerHeight, touch: document.documentElement.classList.contains('touch'), scrollY: window.scrollY, pos: getComputedStyle(document.body).position };
+    });
+    if (!m.touch || m.pos !== 'fixed') throw new Error(`not fixed: ${JSON.stringify(m)}`);
+    if (m.gap > 12 || m.gap < 0) throw new Error(`composer gap ${m.gap}px`);
+    if (Math.abs(m.layout - m.inner) > 1 || m.scrollY !== 0) throw new Error(JSON.stringify(m));
+    if (SHOTS) await p.screenshot({ path: `${SHOTS}/iphone.png` });
+    await ctx.close();
   });
   await step('mobile layout + drawer + back button', async () => {
     await a.setViewportSize({ width: 390, height: 800 });

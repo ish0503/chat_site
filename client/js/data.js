@@ -31,7 +31,9 @@ export async function dmIdFor(a, b) {
   return `dm_${hex(await crypto.subtle.digest('SHA-256', text)).slice(0, 40)}`;
 }
 
-export const isChatRoom = (n) => n?.type === 'text' || n?.type === 'dm';
+export const isChatRoom = (n) => ['text', 'dm', 'code', 'board'].includes(n?.type);
+/** 작업 공간이 딸린 방: 코드 작업실, 보드 방 */
+export const isWorkspace = (n) => n?.type === 'code' || n?.type === 'board';
 
 const preview = (m) => ({
   authorId: m.authorId, author: m.author, content: (m.content || '').slice(0, 120), attachments: (m.attachments || []).length,
@@ -203,6 +205,9 @@ export class DataService extends Emitter {
       this.emit('presence');
     });
     s.on('typing', (e) => this.emit('typing', e));
+    s.on('ws:upsert', ({ roomId, items, by }) => this.#applyWs(roomId, items, { by }));
+    s.on('ws:remove', ({ roomId, ids }) => this.#removeWs(roomId, ids));
+    s.on('ws:focus', (e) => this.emit('wsFocus', e));
     s.on('call:participants', ({ roomId, list }) => {
       if (list.length) this.calls[roomId] = list; else delete this.calls[roomId];
       this.emit('calls', roomId);
@@ -287,6 +292,7 @@ export class DataService extends Emitter {
       for (let i = 0; i < ops.length; i++) {
         const op = ops[i];
         const key = op.payload?.id && ['msg:send', 'upload', 'dm:open', 'node:create'].includes(op.op) ? `${op.op}:${op.payload.id}` : null;
+        if (op.op === 'ws:put' && op.payload?.item) delete op.payload.item.baseRev; // 오프라인에서 고친 파일: 다시 연결됐을 때 버전 비교 없이 반영 (이전 내용은 버전 기록에)
         try {
           if (key && done.has(key)) { await idb.del('outbox', op.seq); continue; }
           if (op.op === 'upload') await this.#uploadStored(op.payload.id);
@@ -361,6 +367,8 @@ export class DataService extends Emitter {
       case 'msgRemove': this.emit('messageRemoved', { id: d.id, roomId: d.roomId }); break;
       case 'user': this.users.set(d.user.id, d.user); this.emit('users'); break;
       case 'outbox': this.pendingOps = d.count; this.emit('status', this.status()); break;
+      case 'ws': this.emit('ws', d.roomId, { items: d.items, by: d.by }); break;
+      case 'wsRemove': this.emit('ws', d.roomId, { removed: d.ids }); break;
       default:
     }
   }
@@ -387,6 +395,7 @@ export class DataService extends Emitter {
       const att = msgs.flatMap((m) => (m.attachments || []).map((a) => a.id));
       await idb.delMany('messages', msgs.map((m) => m.id));
       await idb.delMany('blobs', att);
+      await idb.delMany('wsitems', (await idb.wsRoom(id)).map((x) => x.id));
       files.forget(att);
       this.nodes.delete(id);
     }
@@ -895,6 +904,92 @@ export class DataService extends Emitter {
     await this.request('file:remove', { id });
     await idb.del('blobs', id);
     files.forget([id]);
+  }
+
+  // ───────────── 작업 공간 (코드 프로젝트 · 보드 카드) ─────────────
+  async #applyWs(roomId, items, { by, broadcast } = {}) {
+    await idb.putMany('wsitems', items);
+    this.emit('ws', roomId, { items, by });
+    if (broadcast) this.#post({ t: 'ws', roomId, items, by });
+  }
+
+  async #removeWs(roomId, ids, broadcast = false) {
+    await idb.delMany('wsitems', ids);
+    this.emit('ws', roomId, { removed: ids });
+    if (broadcast) this.#post({ t: 'wsRemove', roomId, ids });
+  }
+
+  /** 방의 작업 공간 항목 전체. 온라인이면 서버 기준으로 기기 사본을 맞춤 (아직 보내지 못한 변경은 유지) */
+  async listWs(roomId) {
+    if (this.isOnline) {
+      try {
+        const res = await this.request('ws:list', { roomId });
+        const pending = new Set((await idb.outboxAll()).filter((o) => o.op.startsWith('ws:')).flatMap((o) => [o.payload.item?.id, ...(o.payload.items || []).map((i) => i.id)]));
+        const ids = new Set(res.items.map((i) => i.id));
+        const local = await idb.wsRoom(roomId);
+        await idb.delMany('wsitems', local.filter((i) => !ids.has(i.id) && !pending.has(i.id)).map((i) => i.id));
+        await idb.putMany('wsitems', res.items.filter((i) => !pending.has(i.id)));
+      } catch (e) {
+        if (!isConnectivity(e)) throw e;
+      }
+    }
+    return idb.wsRoom(roomId);
+  }
+
+  /** 항목 저장 (만들기 · 고치기). patch 에 id 와 kind 는 꼭 있어야 함. 반환: 저장된 항목 */
+  async putWs(roomId, patch) {
+    if (!this.can('editWorkspace')) throw new OpError('forbidden');
+    const prev = await idb.get('wsitems', patch.id);
+    const t = Date.now();
+    const local = {
+      roomId, parentId: null, name: '', order: t, createdBy: this.me.id, createdAt: t, rev: 0, ...prev, ...patch, updatedBy: this.me.id, updatedAt: t,
+    };
+    delete local.baseRev;
+    const res = await this.#mutate('ws:put', { roomId, item: { ...patch, ...(patch.content !== undefined && prev?.rev ? { baseRev: prev.rev } : {}) } }, () => this.#applyWs(roomId, [local], { by: this.me.id, broadcast: true }));
+    if (res?.item) await this.#applyWs(roomId, [res.item], { by: this.me.id });
+    if (res?.conflict) this.emit('notice', { text: '다른 사람이 먼저 고친 파일을 덮어썼습니다. 이전 내용은 버전 기록에서 되살릴 수 있어요.', type: 'warn' });
+    return res?.item || local;
+  }
+
+  async putWsMany(roomId, items) {
+    if (!this.can('editWorkspace')) throw new OpError('forbidden');
+    const t = Date.now();
+    const out = [];
+    for (let i = 0; i < items.length; i += 200) {
+      const chunk = items.slice(i, i + 200);
+      const local = chunk.map((it, k) => ({
+        roomId, parentId: null, name: '', order: t + i + k, createdBy: this.me.id, createdAt: t, rev: 0, updatedBy: this.me.id, updatedAt: t, ...it,
+      }));
+      const res = await this.#mutate('ws:putMany', { roomId, items: chunk.map((it, k) => ({ order: t + i + k, ...it })) }, () => this.#applyWs(roomId, local, { by: this.me.id, broadcast: true }));
+      if (res?.items) await this.#applyWs(roomId, res.items, { by: this.me.id });
+      out.push(...(res?.items || local));
+    }
+    return out;
+  }
+
+  /** 삭제 (하위 항목 포함) */
+  async deleteWs(roomId, ids) {
+    if (!this.can('editWorkspace')) throw new OpError('forbidden');
+    const all = await idb.wsRoom(roomId);
+    const del = [...ids];
+    for (let i = 0; i < del.length; i++) for (const x of all) if (x.parentId === del[i] && !del.includes(x.id)) del.push(x.id);
+    const res = await this.#mutate('ws:delete', { roomId, ids }, () => this.#removeWs(roomId, del, true));
+    if (res?.ids) await this.#removeWs(roomId, res.ids);
+  }
+
+  async wsHistory(roomId, id) {
+    if (!this.isOnline) return [];
+    return (await this.request('ws:history', { roomId, id })).history;
+  }
+
+  sendWsFocus(roomId, id) {
+    if (this.isOnline) this.socket.emit('ws:focus', { roomId, id });
+  }
+
+  /** 대화를 AI 로 분석해 보드 카드 초안 받기 (저장은 사용자가 승인한 뒤 putWsMany 로) */
+  async aiBoard(roomId, { messageIds, view }) {
+    if (!this.isOnline) throw new OpError('offline');
+    return this.request('ai:board', { roomId, messageIds, view }, 120_000);
   }
 
   // ───────────── AI 도우미 ─────────────
