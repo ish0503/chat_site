@@ -45,7 +45,10 @@
       function measure() {
         raf = 0;
         var scale = (vv && vv.scale) || 1;
-        var h = vv ? vv.height * scale : window.innerHeight; // 두 손가락 확대 중에는 높이가 줄어든 것으로 보지 않음
+        // 화면이 확대된 동안에는 보이는 영역의 크기가 키보드와 상관없이 달라지므로 높이를 건드리지 않음
+        // (확대 배율을 곱해 높이를 되돌리면 실제로 보이는 것보다 화면이 길어져 입력창이 아래로 사라짐)
+        if (scale > 1.02) return;
+        var h = vv ? vv.height : window.innerHeight;
         var a = angle();
         if (a !== lastAngle) { lastAngle = a; base = 0; guessUntil = 0; }
         if (!base || h > base) base = h;
@@ -59,10 +62,10 @@
           apply(h, isOpen);
           if (isOpen) remember(base - h);
         }
-        if (scale < 1.02 && (window.scrollY || root.scrollTop || (document.body && document.body.scrollTop))) window.scrollTo(0, 0);
+        if (window.scrollY || root.scrollTop || (document.body && document.body.scrollTop)) window.scrollTo(0, 0);
       }
       function fit() { if (!raf) raf = requestAnimationFrame(measure); }
-      function later() { setTimeout(fit, 120); setTimeout(fit, 380); setTimeout(fit, 720); }
+      function later() { setTimeout(fit, 120); setTimeout(fit, 380); setTimeout(fit, 720); setTimeout(fit, 1300); }
       function typable(el) {
         if (!el || el.readOnly || el.disabled) return false;
         if (el.isContentEditable || el.tagName === 'TEXTAREA') return true;
