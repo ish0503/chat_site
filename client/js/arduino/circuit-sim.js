@@ -4,7 +4,7 @@ export const INPUT = 0; export const OUTPUT = 1; export const INPUT_PULLUP = 2;
 export const LED_VF = { red: 1.8, yellow: 2.0, green: 2.1, blue: 3.0, white: 3.0 };
 export const LED_RS = 12; // 켜진 LED 의 내부 저항(Ω)
 export const LED_BURN_MA = 45; // 이보다 큰 전류가 계속 흐르면 LED 가 탐
-export const NEEDS_5V = new Set(['hcsr04', 'servo', 'lcd']); // 3.3V 로는 동작하지 않는 부품
+export const NEEDS_5V = new Set(['hcsr04', 'servo', 'lcd', 'lcd16', 'neopixel', 'stepper', 'max7219']); // 3.3V 로는 동작하지 않는 부품
 export const pinName = (n) => (n < 14 ? `D${n}` : `A${n - 14}`);
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
@@ -72,6 +72,15 @@ export function solveCircuit(net, pins, burnt) {
       default:
         if (P.VCC !== undefined && P.GND !== undefined) edge('VCC', 'GND', 5000); // 모듈이 쓰는 약한 전류
         if (part.type === 'dht') edge('DATA', 'VCC', 10000); // 모듈에 달린 풀업 저항
+        if (part.type === 'tm1637') { edge('CLK', 'VCC', 10000); edge('DIO', 'VCC', 10000); }
+        if (part.type === 'keypad' && Number.isInteger(pr.key) && pr.key >= 0 && pr.key < 16) edge(`R${(pr.key >> 2) + 1}`, `C${(pr.key & 3) + 1}`, 30); // 누른 키가 줄과 칸을 이음
+        if (part.type === 'encoder') {
+          edge('CLK', 'VCC', 10000); edge('DT', 'VCC', 10000);
+          const ph = Number(pr.phase) || 0; // 시계 방향으로 돌리면 0 → 1 → 2 → 3: DT 가 먼저 닫히고 CLK 가 따라옴 (Encoder(CLK, DT) 가 + 로 셈)
+          if (ph === 2 || ph === 3) edge('CLK', 'GND', 1);
+          if (ph === 1 || ph === 2) edge('DT', 'GND', 1);
+          if (pr.pressed) edge('SW', 'GND', 1);
+        }
     }
   }
   // 고정 전압에 닿지 않는 노드 = 떠 있음(floating)

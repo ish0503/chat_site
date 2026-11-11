@@ -11,6 +11,7 @@ import {
   AVRClock, clockConfig, AVRWatchdog, watchdogConfig, PinState,
 } from './vendor/avr8js.js';
 import { INPUT, OUTPUT, INPUT_PULLUP, LED_BURN_MA, NEEDS_5V, pinName, solveCircuit } from './circuit-sim.js';
+import { extraMakers } from './avr-parts.js';
 
 const F_CPU = 16_000_000;
 const US = F_CPU / 1e6; // 1μs = 16 클럭
@@ -88,7 +89,7 @@ export function createAvrRuntime({ post }) {
   const twi = new AVRTWI(cpu, twiConfig, F_CPU);
   /* eslint-disable no-new */
   new AVRTimer(cpu, timer0Config); new AVRTimer(cpu, timer1Config); new AVRTimer(cpu, timer2Config);
-  new AVRSPI(cpu, spiConfig, F_CPU);
+  const spi = new AVRSPI(cpu, spiConfig, F_CPU);
   new AVREEPROM(cpu, new EEPROMMemoryBackend(1024), eepromConfig);
   new AVRWatchdog(cpu, watchdogConfig, new AVRClock(cpu, F_CPU, clockConfig));
   /* eslint-enable no-new */
@@ -174,10 +175,11 @@ export function createAvrRuntime({ post }) {
         if (tr.prevRise >= 0) { tr.period = t - tr.prevRise; tr.duty = tr.period > 0 ? clamp(tr.pulse / tr.period, 0, 1) : 0; }
         tr.prevRise = t; tr.rise = t;
       } else if (prev === PinState.High) tr.pulse = t - tr.rise;
-      tr.edges++;
+      const wasOut = prev === PinState.High || prev === PinState.Low;
       p.mode = s === PinState.High || s === PinState.Low ? OUTPUT : s === PinState.InputPullUp ? INPUT_PULLUP : INPUT;
       if (p.mode === OUTPUT) p.out = s === PinState.High ? 1 : 0;
-      if (!tr.fast) dirty = true;
+      // PWM 처럼 출력이 빠르게 켜졌다 꺼지는 것만 "평균"으로 다루고, 입력 ↔ 출력이 바뀌면 회로를 바로 다시 계산
+      if (wasOut && p.mode === OUTPUT) { tr.edges++; if (!tr.fast) dirty = true; } else { tr.fast = false; p.pwm = null; dirty = true; }
       const nd = node(pin);
       if (nd !== undefined) for (const dev of lineListeners.get(nd) || []) dev.onLine(nd, t);
     }
@@ -396,6 +398,18 @@ export function createAvrRuntime({ post }) {
     },
   };
 
+  Object.assign(makers, extraMakers({
+    cpu, US, drive, after, powered, mcuDrive, pstate, hint, node, wallStart,
+    simMs: () => simMs(),
+    touch: () => { changed = true; },
+    redo: () => { dirty = true; },
+  }));
+  // 하드웨어 SPI 로 내보낸 바이트: DIN 이 D11(MOSI), CLK 가 D13(SCK)에 이어진 부품에게 전달
+  spi.onByte = (value) => {
+    for (const d of devices.values()) if (d.spi && d.part.pins.DIN !== undefined && d.part.pins.DIN === node(11) && d.part.pins.CLK !== undefined && d.part.pins.CLK === node(13)) d.spi(value);
+    cpu.addClockEvent(() => spi.completeTransfer(0xFF), spi.transferCycles);
+  };
+
   // I2C: 주소에 맞는 부품이 전원과 SDA(A4) · SCL(A5)에 제대로 이어져 있을 때만 응답
   const onBus = (part) => part.pins.SDA !== undefined && part.pins.SDA === node(18) && part.pins.SCL !== undefined && part.pins.SCL === node(19);
   let i2cTarget = null;
@@ -409,7 +423,7 @@ export function createAvrRuntime({ post }) {
       if (i2cTarget) i2cTarget.begin(write);
       else if (addr > 7 && addr < 120) {
         const same = all.find((d) => d.i2c.addr === addr);
-        const label = (d) => `${d.part.type === 'bmp280' ? 'BMP280' : d.part.type === 'mpu6050' ? 'MPU6050' : 'LCD'}(0x${d.i2c.addr.toString(16)})`;
+        const label = (d) => `${({ bmp280: 'BMP280', mpu6050: 'MPU6050', lcd: 'LCD', rtc: 'RTC', oled: 'OLED' })[d.part.type] || d.part.type}(0x${d.i2c.addr.toString(16)})`;
         if (same && !powered(same.part)) hint(`I2C: ${label(same)} 에 전원이 들어오지 않습니다. VCC → 5V${NEEDS_5V.has(same.part.type) ? '' : '(또는 3.3V)'}, GND → GND 를 확인하세요.`);
         else if (same) hint(`I2C: ${label(same)} 의 신호선을 확인하세요 (SDA → A4, SCL → A5).`);
         else if (all.length && !hints.has('i2c-scan')) { hints.add('i2c-scan'); if (!all.some((d) => d.i2c.addr === addr)) hint(`I2C: 스케치가 주소 0x${addr.toString(16)} 를 찾았지만 응답이 없습니다. 회로에 있는 장치: ${all.map(label).join(', ')}. (예: BMP280 은 bmp.begin(0x76))`); }
@@ -422,16 +436,18 @@ export function createAvrRuntime({ post }) {
 
   /** 스케치와 상관없이 알 수 있는 배선 문제를 알려 줌 */
   function checkWiring() {
-    const SIGNALS = { dht: ['DATA'], hcsr04: ['TRIG', 'ECHO'], hx711: ['DT', 'SCK'], servo: ['SIG'], gps: ['TX'] };
-    const NAMES = { dht: '온습도 센서(DHT)', hcsr04: '초음파 센서(HC-SR04)', hx711: '로드셀(HX711)', servo: '서보 모터', gps: 'GPS 모듈', bmp280: '기압·고도 센서(BMP280)', mpu6050: '가속도·자이로 센서(MPU6050)', lcd: 'LCD(I2C)' };
+    const SIGNALS = { dht: ['DATA'], hcsr04: ['TRIG', 'ECHO'], hx711: ['DT', 'SCK'], servo: ['SIG'], gps: ['TX'], ds18b20: ['DQ'], neopixel: ['DIN'], stepper: ['IN1', 'IN2', 'IN3', 'IN4'], lcd16: ['RS', 'E', 'D4', 'D5', 'D6', 'D7'], tm1637: ['CLK', 'DIO'], max7219: ['DIN', 'CS', 'CLK'], irrecv: ['OUT'] };
+    const NAMES = { dht: '온습도 센서(DHT)', hcsr04: '초음파 센서(HC-SR04)', hx711: '로드셀(HX711)', servo: '서보 모터', gps: 'GPS 모듈', bmp280: '기압·고도 센서(BMP280)', mpu6050: '가속도·자이로 센서(MPU6050)', lcd: 'LCD(I2C)', ds18b20: '온도 센서(DS18B20)', neopixel: 'NeoPixel', stepper: '스테퍼 모터', lcd16: 'LCD', tm1637: '숫자 표시기(TM1637)', max7219: 'LED 매트릭스(MAX7219)', irrecv: '적외선 수신기', rtc: '시계 모듈(RTC)', oled: 'OLED 화면', encoder: '로터리 엔코더' };
     for (const part of net.parts) {
       const name = NAMES[part.type];
       if (!name) continue;
       const v = supply(part);
       if (v < 3.0) hint(`${name}: 전원이 들어오지 않습니다. VCC → 5V${NEEDS_5V.has(part.type) ? '' : '(또는 3.3V)'}, GND → GND 를 연결하세요 (빵판의 + / − 줄을 쓴다면 그 줄도 보드에 이어져 있어야 합니다).`);
       else if (!powered(part)) hint(`${name}: 이 부품은 5V 전원이 필요합니다. VCC 를 3.3V 가 아니라 5V 에 연결하세요.`);
-      for (const sig of SIGNALS[part.type] || []) if (!(pinsOnNode.get(part.pins[sig]) || []).length) hint(`${name}: ${sig} 핀이 아두이노의 어느 핀에도 이어져 있지 않습니다.`);
-      if (['bmp280', 'mpu6050', 'lcd'].includes(part.type) && !onBus(part)) hint(`${name}: I2C 신호선을 확인하세요 (SDA → A4, SCL → A5).`);
+      const loose = (SIGNALS[part.type] || []).filter((sig) => !(pinsOnNode.get(part.pins[sig]) || []).length);
+      if (loose.length) hint(`${name}: ${loose.join(', ')} 핀이 아두이노의 어느 핀에도 이어져 있지 않습니다.`);
+      if (part.type === 'ds18b20' && v >= 3.0 && voltAt(part.pins.DQ) === null) hint('온도 센서(DS18B20): DQ 선에 풀업 저항이 없습니다. DQ 와 5V 사이에 4.7kΩ 저항을 연결하세요.');
+      if (['bmp280', 'mpu6050', 'lcd', 'rtc', 'oled'].includes(part.type) && !onBus(part)) hint(`${name}: I2C 신호선을 확인하세요 (SDA → A4, SCL → A5).`);
     }
   }
 
@@ -439,7 +455,7 @@ export function createAvrRuntime({ post }) {
     ensure();
     for (const d of devices.values()) {
       d.refresh?.();
-      if (d.part.type === 'lcd' && !powered(d.part)) { d.off(); pstate.delete(d.part.id); changed = true; }
+      if ((d.part.type === 'lcd' || d.part.type === 'lcd16') && !powered(d.part)) { d.off(); if (pstate.has(d.part.id)) { pstate.delete(d.part.id); changed = true; } }
       if (d.part.type === 'servo' && !powered(d.part)) changed = true;
     }
   }
@@ -470,6 +486,7 @@ export function createAvrRuntime({ post }) {
     for (const [id, since] of overSince) if (now - since > 1500) { burnt.add(id); overSince.delete(id); dirty = true; }
     if (frames % 100 === 0) for (const d of devices.values()) d.second?.();
     if (frames % 10 === 0) refreshDevices();
+    else if (frames % 3 === 0) for (const d of devices.values()) d.fast?.();
     flushTx();
     if (frames % 5 === 0) report();
   }
@@ -494,7 +511,7 @@ export function createAvrRuntime({ post }) {
           f = pin !== undefined ? Math.round(F_CPU / track[pin].period) : Math.abs(a - b) > 2 ? 2300 : 0;
         }
         out.parts[part.id] = { f };
-      } else if (part.type === 'servo') { if (pstate.has(part.id)) out.parts[part.id] = pstate.get(part.id); } else if (part.type === 'lcd') { if (powered(part)) out.parts[part.id] = pstate.get(part.id) || { l: [], b: 0 }; }
+      } else if (part.type === 'lcd') { if (powered(part)) out.parts[part.id] = pstate.get(part.id) || { l: [], b: 0 }; } else if (part.type === 'lcd16') { if (powered(part)) out.parts[part.id] = pstate.get(part.id) || { l: [], b: 1 }; } else if (pstate.has(part.id)) out.parts[part.id] = pstate.get(part.id);
     }
     if (dim && pins.some((p) => p.mode === INPUT_PULLUP)) hint('LED 가 아주 희미하게만 켜집니다. pinMode(핀, OUTPUT) 을 빠뜨리면 digitalWrite(HIGH) 는 약한 풀업 저항만 켭니다.');
     return out;
@@ -547,7 +564,12 @@ export function createAvrRuntime({ post }) {
 
   return {
     setNet,
-    setProp(id, key, value) { const p = net.parts.find((x) => x.id === id); if (!p) return; p.props[key] = value; dirty = true; resolve(); refreshDevices(); },
+    setProp(id, key, value) {
+      const p = net.parts.find((x) => x.id === id);
+      if (!p) return;
+      if (devices.get(id)?.action?.(key, value)) return; // 리모컨 버튼처럼 값이 아니라 동작인 것
+      p.props[key] = value; dirty = true; resolve(); refreshDevices();
+    },
     serialIn(text) { for (const b of new TextEncoder().encode(String(text))) rxQueue.push(b); pumpRx(); },
     snapshot,
     report,

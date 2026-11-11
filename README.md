@@ -187,7 +187,7 @@ GitHub 에 push 하거나 PR 을 열면 `.github/workflows/test.yml` 이 두 테
 
 - 컴파일러는 남이 쓴 코드를 읽으므로, 서버(root)와 다른 사용자(`nobody`)로 환경 변수 없이 실행합니다. 서버를 root 가 아닌 사용자로 띄우면 이 분리를 할 수 없어 기능이 꺼집니다 (`ARDUINO_COMPILER=1` 로 강제로 켤 수 있지만, 그 경우 스케치가 서버의 환경 변수를 읽을 수 있으므로 신뢰할 수 있는 사용자만 있을 때 쓰세요).
 - 컴파일은 한 번에 하나씩 처리하고, 사용자별로 횟수를 제한합니다. 무료 인스턴스에서 메모리가 모자라면 `ARDUINO_COMPILER=0` 으로 끄세요.
-- 내 컴퓨터(Ubuntu 24.04)에서 쓰려면: `sudo apt install gcc-avr avr-libc arduino-core-avr unzip && sudo sh server/scripts/fetch-arduino-libs.sh /opt/arduino-libs` 후 `ARDUINO_COMPILER=1 npm run dev:memory`. 확인: `GET /api/arduino/status`.
+- 내 컴퓨터(Ubuntu 24.04)에서 쓰려면: `sudo apt install gcc-avr avr-libc arduino-core-avr unzip && sudo node server/scripts/fetch-arduino-libs.mjs /opt/arduino-libs` 후 `ARDUINO_COMPILER=1 npm run dev:memory`. 확인: `GET /api/arduino/status`.
 
 ### 3. GitHub Pages (클라이언트)
 1. 저장소 **Settings → Pages → Build and deployment → Source** 를 **GitHub Actions** 로 바꿉니다.

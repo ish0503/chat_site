@@ -2,8 +2,9 @@
 // 스케치는 compiler.js 가 JS 로 바꾸고, Worker(runtime.js)가 회로 연결 상태에 따라 실행합니다.
 import { h, toast, debounce } from '../util.js';
 import { icon } from './icons.js';
-import { openMenu } from './common.js';
+import { openMenu, openModal } from './common.js';
 import { compileSketch } from '../arduino/compiler.js';
+import { IR_KEYS } from '../arduino/avr-parts.js';
 import {
   BOARDS, PART_DEFS, WIRE_COLORS, PITCH, BB, PWM, bbHoles, holeNear, pinsOf, boardPins, terminalPos, snapPart, buildNetlist, newId, emptyCircuit, parseCircuit,
 } from '../arduino/parts.js';
@@ -32,8 +33,31 @@ function bboxOf(part) {
   if (part.type === 'buzzer') return [-9, -32, 19, -4];
   const n = def.pins.length;
   const cx = ((n - 1) * PITCH) / 2;
-  const w = part.type === 'lcd' ? 112 : Math.max(52, (n - 1) * PITCH + 22);
-  return [cx - w / 2, part.type === 'lcd' ? -72 : -60, cx + w / 2, -6];
+  const box = BOX[part.type];
+  const w = part.type === 'neopixel' ? Math.max(60, (Number(part.props?.count) || 8) * 11 + 12) : box ? box[0] : Math.max(52, (n - 1) * PITCH + 22);
+  return [cx - w / 2, -(box ? box[1] : 54) - 6, cx + w / 2, -6];
+}
+// 몸통이 큰 부품의 크기 [너비, 높이]
+const BOX = { lcd: [112, 66], lcd16: [112, 66], neopixel: [60, 40], keypad: [84, 98], oled: [84, 64], tm1637: [92, 50], max7219: [78, 94], stepper: [72, 76], encoder: [58, 62], irrecv: [52, 50], ds18b20: [52, 46], rtc: [58, 48] };
+const KEYS = '123A456B789C*0#D';
+const AVR_ONLY = new Set(['ds18b20', 'neopixel', 'rtc', 'stepper', 'lcd16', 'keypad', 'oled', 'tm1637', 'max7219', 'encoder', 'irrecv']);
+// 7세그먼트: 비트(a~g) → 선분
+const SEG = ['M2 1H10', 'M11 2V9', 'M11 11V18', 'M2 19H10', 'M1 11V18', 'M1 2V9', 'M2 10H10'];
+const oledCache = new Map(); // 화면 데이터(base64) → 그림 주소
+function oledImage(fb, inv) {
+  const key = `${inv ? 1 : 0}${fb}`;
+  if (oledCache.has(key)) return oledCache.get(key);
+  const bin = atob(fb);
+  const canvas = document.createElement('canvas');
+  canvas.width = 128; canvas.height = 64;
+  const c2 = canvas.getContext('2d');
+  const img = c2.createImageData(128, 64);
+  for (let page = 0; page < 8; page++) for (let x = 0; x < 128; x++) { const b = bin.charCodeAt(page * 128 + x); for (let bit = 0; bit < 8; bit++) { const lit = !!((b >> bit) & 1) !== !!inv; const i = ((page * 8 + bit) * 128 + x) * 4; img.data[i] = lit ? 190 : 6; img.data[i + 1] = lit ? 235 : 10; img.data[i + 2] = lit ? 255 : 16; img.data[i + 3] = 255; } }
+  c2.putImageData(img, 0, 0);
+  const url = canvas.toDataURL();
+  if (oledCache.size > 6) oledCache.clear();
+  oledCache.set(key, url);
+  return url;
 }
 
 /**
@@ -57,6 +81,7 @@ export function createArduinoPane(host) {
   const bar = h('div', { class: 'ardu-bar' },
     h('strong', { class: 'ardu-title' }, '아두이노 연결'), boardSel,
     h('button', { class: 'btn small secondary', type: 'button', onclick: (e) => partMenu(e.currentTarget) }, icon('plus', 14), ' 부품'),
+    h('button', { class: 'btn small secondary ardu-lib-btn', type: 'button', title: '라이브러리 관리', 'aria-label': '라이브러리 관리', onclick: () => libraryDialog() }, icon('archive', 14), h('span', {}, ' 라이브러리')),
     delBtn, h('span', { class: 'grow' }),
     h('button', { class: 'icon-btn tiny', title: '축소', 'aria-label': '축소', onclick: () => zoomBy(1 / 1.25) }, '−'),
     h('button', { class: 'icon-btn tiny', title: '확대', 'aria-label': '확대', onclick: () => zoomBy(1.25) }, '＋'),
@@ -162,6 +187,8 @@ export function createArduinoPane(host) {
       case 'gps': return p.fix === false ? '수신 안 됨' : `${Number(p.lat).toFixed(3)},${Number(p.lng).toFixed(3)}`;
       case 'hx711': return `${p.weight} g`;
       case 'hcsr04': return `${p.dist} cm`;
+      case 'ds18b20': return `${p.temp}℃`;
+      case 'rtc': return 'DS3231';
       default: return '';
     }
   }
@@ -210,13 +237,50 @@ export function createArduinoPane(host) {
       const cx = (x0 + x1) / 2;
       g.append(s('rect', { x: x0, y: y0, width: x1 - x0, height: y1 - y0, rx: 3, fill: def.color || '#455a64', stroke: 'rgba(0,0,0,.4)', 'stroke-width': 0.6, class: 'ardu-body' }),
         s('text', { x: cx, y: y0 + 10, class: 'ardu-mod-title', 'text-anchor': 'middle' }, def.short || def.name));
-      if (part.type === 'lcd') {
+      if (part.type === 'lcd' || part.type === 'lcd16') {
         const on = live && live.b !== 0;
         g.append(s('rect', { x: x0 + 5, y: y0 + 14, width: x1 - x0 - 10, height: 26, rx: 1.5, fill: on ? '#b6e34a' : '#5f7a2a', stroke: '#222', 'stroke-width': 0.5 }));
         (live?.l || []).slice(0, 2).forEach((line, i) => g.append(s('text', { x: x0 + 9, y: y0 + 24 + i * 11, class: 'ardu-lcd', 'xml:space': 'preserve' }, String(line).slice(0, 16))));
       } else if (part.type === 'servo') {
         g.append(s('circle', { cx, cy: y0 + 26, r: 8, fill: '#e7e9ec' }), s('path', { d: `M${cx} ${y0 + 26}h-14`, stroke: '#fff', 'stroke-width': 3.2, 'stroke-linecap': 'round', transform: `rotate(${live?.a ?? 90} ${cx} ${y0 + 26})` }),
           s('text', { x: cx, y: y0 + 44, class: 'ardu-val light', 'text-anchor': 'middle' }, `${live?.a ?? 90}°`));
+      } else if (part.type === 'neopixel') {
+        const count = Number(p.count) || 8;
+        for (let i = 0; i < count; i++) {
+          const color = live?.px?.[i] || '#000000';
+          const lit = color !== '#000000';
+          if (lit) g.append(s('circle', { cx: x0 + 11.5 + i * 11, cy: y0 + 26, r: 7.5, fill: color, opacity: 0.35 }));
+          g.append(s('rect', { x: x0 + 7.5 + i * 11, y: y0 + 22, width: 8, height: 8, rx: 1.5, fill: lit ? color : '#2a2f3a', stroke: '#6b7280', 'stroke-width': 0.4 }));
+        }
+      } else if (part.type === 'stepper') {
+        g.append(s('circle', { cx, cy: y0 + 36, r: 17, fill: '#cfd8dc', stroke: '#78909c' }), s('circle', { cx, cy: y0 + 36, r: 3, fill: '#546e7a' }),
+          s('path', { d: `M${cx} ${y0 + 36}V${y0 + 21}`, stroke: '#d32f2f', 'stroke-width': 2.4, 'stroke-linecap': 'round', transform: `rotate(${live?.a ?? 0} ${cx} ${y0 + 36})` }),
+          s('text', { x: cx, y: y0 + 64, class: 'ardu-val light', 'text-anchor': 'middle' }, `${live?.n ?? 0} 스텝 · ${live?.a ?? 0}°`));
+      } else if (part.type === 'keypad') {
+        KEYS.split('').forEach((ch, i) => {
+          const kx = x0 + 8 + (i & 3) * 17.5; const ky = y0 + 16 + (i >> 2) * 17.5;
+          g.append(s('rect', { x: kx, y: ky, width: 15, height: 15, rx: 2.5, fill: p.key === i ? '#ffb300' : '#eceff1', stroke: '#90a4ae', 'stroke-width': 0.5 }), s('text', { x: kx + 7.5, y: ky + 10.5, class: 'ardu-key', 'text-anchor': 'middle' }, ch));
+        });
+      } else if (part.type === 'oled') {
+        g.append(s('rect', { x: cx - 37, y: y0 + 14, width: 74, height: 38, rx: 1.5, fill: '#05070c', stroke: '#333', 'stroke-width': 0.5 }));
+        if (live?.fb && live.on) { const im = s('image', { x: cx - 36, y: y0 + 15, width: 72, height: 36, style: 'image-rendering: pixelated' }); im.setAttribute('href', oledImage(live.fb, live.inv)); g.append(im); }
+      } else if (part.type === 'tm1637') {
+        g.append(s('rect', { x: x0 + 6, y: y0 + 14, width: x1 - x0 - 12, height: 28, rx: 2, fill: '#0b0b0b' }));
+        for (let d = 0; d < 4; d++) {
+          const bits = live?.on ? live.seg?.[d] || 0 : 0;
+          const dg = s('g', { transform: `translate(${x0 + 12 + d * 18},${y0 + 18})` });
+          SEG.forEach((path, k) => dg.append(s('path', { d: path, stroke: (bits >> k) & 1 ? '#ff3b30' : '#2a1010', 'stroke-width': 2.2, 'stroke-linecap': 'round' })));
+          if (bits & 128) dg.append(s('circle', { cx: 14.5, cy: d === 1 ? 10 : 19, r: 1.3, fill: '#ff3b30' }));
+          g.append(dg);
+        }
+      } else if (part.type === 'max7219') {
+        g.append(s('rect', { x: cx - 34, y: y0 + 14, width: 68, height: 68, rx: 2, fill: '#0b0b0b' }));
+        for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) g.append(s('circle', { cx: cx - 28 + c * 8, cy: y0 + 20 + r * 8, r: 3, fill: live?.on && (live.rows?.[r] & (0x80 >> c)) ? '#ff3b30' : '#3a1414' }));
+      } else if (part.type === 'encoder') {
+        g.append(s('circle', { cx, cy: y0 + 32, r: 14, fill: p.pressed ? '#90a4ae' : '#cfd8dc', stroke: '#546e7a' }), s('path', { d: `M${cx} ${y0 + 32}V${y0 + 20}`, stroke: '#263238', 'stroke-width': 2.4, 'stroke-linecap': 'round', transform: `rotate(${(Number(p.pos) || 0) * 18} ${cx} ${y0 + 32})` }),
+          s('text', { x: cx, y: y0 + 54, class: 'ardu-val light', 'text-anchor': 'middle' }, `${p.pos || 0}칸`));
+      } else if (part.type === 'irrecv') {
+        g.append(s('path', { d: `M${cx - 9} ${y0 + 36}V${y0 + 24}a9 9 0 0 1 18 0V${y0 + 36}z`, fill: '#3b2f2f', stroke: '#000', 'stroke-width': 0.5 }), s('circle', { cx, cy: y0 + 25, r: 3.2, fill: '#5d4037' }));
       } else {
         if (part.type === 'hcsr04') g.append(s('circle', { cx: cx - 12, cy: y0 + 24, r: 7, fill: '#cfd8dc', stroke: '#546e7a' }), s('circle', { cx: cx + 12, cy: y0 + 24, r: 7, fill: '#cfd8dc', stroke: '#546e7a' }));
         g.append(s('text', { x: cx, y: y0 + (part.type === 'hcsr04' ? 38 : 22), class: 'ardu-val light', 'text-anchor': 'middle' }, valueText(part)));
@@ -371,7 +435,7 @@ export function createArduinoPane(host) {
     part.props[key] = value;
     st.worker?.postMessage({ type: 'prop', id: part.id, key, value });
     if (redraw) drawSoon();
-    if (key !== 'pressed') save();
+    if (key !== 'pressed' && key !== 'key') save();
   }
   function partMenu(anchor) {
     const groups = ['기본', '센서', '출력'];
@@ -381,6 +445,58 @@ export function createArduinoPane(host) {
       for (const [type, def] of Object.entries(PART_DEFS)) if (def.group === group) items.push({ label: def.name, icon: type === 'breadboard' ? 'grid' : group === '센서' ? 'activity' : group === '출력' ? 'sliders' : 'plus', onClick: () => addPart(type) });
     }
     openMenu(anchor, items, { header: h('div', { class: 'menu-head muted small' }, '추가할 부품을 고르세요') });
+  }
+
+  // ── 라이브러리 관리 ──
+  const LIB_WHY = { offline: '서버에 연결되어 있지 않습니다.', compiler_unavailable: '서버에 아두이노 컴파일러가 설치되어 있지 않습니다.', forbidden: '로그인한 사용자만 설치 · 삭제할 수 있습니다.', rate_limited: '요청이 너무 잦습니다. 잠시 뒤 다시 해 보세요.', library_install_failed: '내려받지 못했습니다. 잠시 뒤 다시 해 보세요.', db_unavailable: '서버의 데이터베이스가 준비되지 않았습니다.' };
+  function libraryDialog() {
+    const search = h('input', { class: 'input', type: 'search', placeholder: '이름 · 설명 · 헤더(.h)로 찾기', 'aria-label': '라이브러리 찾기' });
+    const listEl = h('div', { class: 'lib-list' }, h('div', { class: 'spinner' }));
+    const info = h('p', { class: 'muted small' }, '실제 컴파일러(서버)에 설치된 라이브러리입니다. 설치하면 이 서버를 쓰는 모든 사람이 #include 로 쓸 수 있습니다.');
+    let libs = [];
+    let canManage = false;
+    let busy = null;
+    const render = () => {
+      const q = search.value.trim().toLowerCase();
+      const shown = libs.filter((l) => !q || `${l.name} ${l.desc} ${l.headers.join(' ')} ${l.author}`.toLowerCase().includes(q));
+      const row = (l) => h('div', { class: `lib-row${l.installed ? '' : ' off'}` },
+        h('div', { class: 'lib-head' }, h('strong', {}, l.name), l.version ? h('span', { class: 'muted small' }, `v${l.version}`) : null,
+          h('span', { class: `lib-badge ${l.builtin ? 'base' : l.installed ? 'on' : ''}` }, l.builtin ? '기본 내장' : l.installed ? '설치됨' : '설치 안 됨'),
+          l.sim === 'pins' ? h('span', { class: 'lib-badge warn', title: '컴파일과 실행은 되지만, 이 라이브러리가 다루는 부품은 회로 창에 아직 없습니다.' }, '부품 없음') : null),
+        h('div', { class: 'small' }, l.desc), h('div', { class: 'muted small' }, l.author),
+        h('div', { class: 'lib-actions' },
+          l.headers.slice(0, 2).map((hd) => h('button', { class: 'btn small ghost mono', type: 'button', disabled: !l.installed, title: '스케치 맨 위에 넣기', onclick: () => host.onInsertInclude?.(hd) }, `#include <${hd}>`)),
+          h('span', { class: 'grow' }),
+          l.builtin || !canManage ? null : h('button', { class: `btn small ${l.installed ? 'danger-ghost' : 'primary'}`, type: 'button', disabled: !!busy, onclick: () => change(l) },
+            busy === l.id ? h('span', { class: 'spinner tiny' }) : null, l.installed ? ' 삭제' : ' 설치')));
+      const on = shown.filter((l) => l.installed);
+      const off = shown.filter((l) => !l.installed);
+      listEl.replaceChildren(
+        ...(off.length ? [h('div', { class: 'lib-group' }, `설치할 수 있음 (${off.length})`), ...off.map(row)] : []),
+        ...(on.length ? [h('div', { class: 'lib-group' }, `설치됨 (${on.length})`), ...on.map(row)] : []),
+        ...(shown.length ? [] : [h('p', { class: 'muted pad' }, '찾는 라이브러리가 목록에 없습니다. 파일이 적은 라이브러리는 .h / .cpp 를 스케치와 같은 폴더에 올려 #include "이름.h" 로 쓸 수 있습니다.')]));
+    };
+    async function change(l) {
+      busy = l.id;
+      render();
+      try {
+        libs = (await host.libraries.change(l.id, l.installed ? 'remove' : 'install')).libraries;
+        toast(l.installed ? `'${l.name}' 을(를) 삭제했습니다.` : `'${l.name}' 을(를) 설치했습니다.`, 'success');
+      } catch (e) {
+        toast(e.code === 'library_in_use' ? '다른 설치된 라이브러리가 이 라이브러리를 쓰고 있어 삭제할 수 없습니다.' : LIB_WHY[e.code] || `실패했습니다 (${e.code || e.message}).`, 'error', 5000);
+      }
+      busy = null;
+      render();
+    }
+    search.addEventListener('input', render);
+    openModal({ title: '아두이노 라이브러리', cls: 'lib-modal', body: [info, search, listEl], actions: [{ label: '닫기' }] });
+    if (!host.libraries) { listEl.replaceChildren(h('p', { class: 'muted pad' }, '이 화면에서는 라이브러리를 관리할 수 없습니다.')); return; }
+    host.libraries.list().then((r) => {
+      libs = r.libraries; canManage = r.canManage && r.available;
+      if (!r.available) info.textContent = '서버에 아두이노 컴파일러가 설치되어 있지 않아, 지금은 간이 변환기로만 실행됩니다. 아래 라이브러리는 실제 컴파일러가 있을 때 쓸 수 있습니다.';
+      else if (!r.canManage) info.textContent = '실제 컴파일러(서버)에 설치된 라이브러리입니다. 설치 · 삭제는 로그인한 사용자만 할 수 있습니다.';
+      render();
+    }).catch((e) => listEl.replaceChildren(h('p', { class: 'muted pad' }, `목록을 불러오지 못했습니다: ${LIB_WHY[e.code] || e.code || e.message} 서버에 연결되어 있을 때 다시 열어 주세요.`)));
   }
 
   // ── 선택한 것의 설정 ──
@@ -430,7 +546,10 @@ export function createArduinoPane(host) {
     }
     inspect.replaceChildren(
       h('div', { class: 'ardu-ins-head' }, h('strong', { class: 'ellipsis' }, def.name), h('button', { class: 'btn small danger-ghost', type: 'button', onclick: () => removeSelected() }, '지우기')),
-      ...rows, def.desc ? h('p', { class: 'muted small ardu-desc' }, def.desc) : null);
+      ...rows,
+      def.remote ? h('div', { class: 'ardu-remote' }, def.remote.map((label) => h('button', { class: 'btn small secondary', type: 'button', onclick: () => { if (!st.running) return toast('먼저 ▶ 실행을 누르세요.', 'warn'); st.worker.postMessage({ type: 'prop', id: part.id, key: 'send', value: IR_KEYS[label] }); return undefined; } }, label))) : null,
+      AVR_ONLY.has(part.type) ? h('p', { class: 'muted small ardu-desc' }, 'ℹ 이 부품은 "실제 컴파일러"로 실행할 때만 동작합니다.') : null,
+      def.desc ? h('p', { class: 'muted small ardu-desc' }, def.desc) : null);
     return undefined;
   }
   function renderWarn() {
@@ -481,7 +600,12 @@ export function createArduinoPane(host) {
     if (wire) { st.sel = { kind: 'wire', id: wire.id }; st.drag = { kind: 'none' }; draw(); renderInspect(); return; }
     const part = top;
     if (part) {
-      if (st.running && part.type === 'button') { setProp(part, 'pressed', true); st.drag = { kind: 'press', part }; return; }
+      if (st.running && (part.type === 'button' || part.type === 'encoder')) { setProp(part, 'pressed', true); st.drag = { kind: 'press', part }; return; }
+      if (st.running && part.type === 'keypad') { // 누른 자리의 키
+        const [bx0, by0] = bboxOf(part);
+        const col = Math.floor((pt.x - part.x - bx0 - 8) / 17.5); const row = Math.floor((pt.y - part.y - by0 - 16) / 17.5);
+        if (col >= 0 && col < 4 && row >= 0 && row < 4) { setProp(part, 'key', row * 4 + col); st.drag = { kind: 'press', part, key: true }; return; }
+      }
       st.sel = { kind: 'part', id: part.id };
       st.drag = { kind: 'part', part, start, ox: part.x, oy: part.y, moved: false, carry: part.type === 'breadboard' ? carried(part) : [] };
       draw(); renderInspect();
@@ -530,7 +654,7 @@ export function createArduinoPane(host) {
     if (!d) return;
     if (d.kind === 'pinch') { if (pointers.size < 2) st.drag = pointers.size ? { kind: 'none' } : null; return; }
     st.drag = null;
-    if (d.kind === 'press') { setProp(d.part, 'pressed', false); return; }
+    if (d.kind === 'press') { if (d.key) setProp(d.part, 'key', -1); else setProp(d.part, 'pressed', false); return; }
     if (d.kind === 'wire' && st.pending) {
       if (!d.moved) { drawOver(); return; } // 톡 누름: 다음에 누르는 단자와 연결
       const end = e.type === 'pointerup' ? terminalAt(toWorld(e), st.pending.from) : null;
@@ -617,7 +741,7 @@ export function createArduinoPane(host) {
     st.job = (st.job || 0) + 1; // 진행 중인 컴파일 결과는 버림
     if (st.compiling) { st.compiling = false; if (!quiet) note('■ 컴파일을 취소했습니다.'); }
     if (st.worker) { st.worker.terminate(); st.worker = null; if (!quiet) note('■ 중지했습니다.'); }
-    for (const p of st.circuit.parts) if (p.props.pressed) p.props.pressed = false;
+    for (const p of st.circuit.parts) { if (p.props.pressed) p.props.pressed = false; if (p.type === 'keypad') delete p.props.key; }
     st.running = false;
     st.state = null;
     st.baud = null;
@@ -656,6 +780,7 @@ export function createArduinoPane(host) {
     if (job !== st.job) return false;
     st.compiling = false;
     clearLog();
+    for (const name of r.installed || []) note(`📦 라이브러리 '${name}' 을(를) 서버에 자동으로 설치했습니다.`);
     if (!r.ok) {
       const errs = r.errors?.length ? r.errors : [{ file: '', line: 0, message: (r.log || '알 수 없는 오류').slice(0, 600) }];
       for (const e of errs) note(`컴파일 오류: ${e.file && e.file !== 'sketch.ino' ? `[${e.file}${e.line ? `:${e.line}` : ''}] ` : ''}${e.message}`, 'run-error', e.file === 'sketch.ino' ? e.line : 0);
@@ -684,6 +809,7 @@ export function createArduinoPane(host) {
       }
       for (const inc of out.includes) if (!KNOWN_HEADERS.test(inc)) note(`⚠ <${inc}> 라이브러리는 간이 변환기가 알지 못합니다. 그 라이브러리의 함수는 동작하지 않을 수 있습니다.`, 'run-warn');
     }
+    if (!built && st.circuit.parts.some((p) => AVR_ONLY.has(p.type))) note('⚠ 회로에 실제 컴파일러에서만 동작하는 부품이 있습니다 (간이 변환기는 이 부품들을 다루지 못합니다).', 'run-warn');
     st.real = !!built;
     try {
       st.worker = new Worker(new URL('../arduino/worker.js', import.meta.url), { type: 'module' });

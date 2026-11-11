@@ -1214,6 +1214,9 @@ svg.links path { fill: none; stroke-width: 2; }
 .ardu-mark { font-size: 7px; fill: var(--muted); }
 .ardu-mod-title { font-size: 7px; font-weight: 700; fill: #fff; }
 .ardu-lcd { font: 7.6px var(--mono); fill: #1b2b05; }
+.ardu-key { font: 700 8px var(--mono); fill: #263238; }
+.ardu-remote { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; }
+.ardu-remote .btn { padding: 0; min-height: 30px; }
 .ardu-leg { stroke: #a3a9b0; stroke-width: 1.6; stroke-linecap: round; fill: none; }
 .ardu-term { fill: #d5d9de; stroke: #4b4f55; stroke-width: 0.5; }
 .ardu-wire { fill: none; stroke-width: 2.6; stroke-linecap: round; }
@@ -1251,12 +1254,25 @@ svg.links path { fill: none; stroke-width: 2; }
 .ardu-send { flex: none; display: flex; gap: 6px; padding: 6px 8px; border-top: 1px solid var(--border); }
 .ardu-send-input { flex: 1; min-width: 0; font-family: var(--mono); }
 .menu-head { padding: 6px 12px; }
+.lib-modal { max-width: 620px; }
+.lib-list { display: flex; flex-direction: column; gap: 6px; max-height: 56dvh; overflow-y: auto; margin-top: 8px; }
+.lib-group { font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--muted); padding: 8px 2px 2px; }
+.lib-row { background: var(--bg-1); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; display: flex; flex-direction: column; gap: 3px; }
+.lib-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.lib-badge { font-size: 11px; padding: 1px 7px; border-radius: 8px; background: var(--bg-4); color: var(--muted); white-space: nowrap; }
+.lib-badge.on { background: rgba(35, 165, 89, 0.18); color: var(--success); }
+.lib-badge.base { background: var(--accent-soft); color: var(--accent); }
+.lib-badge.warn { background: var(--warn-soft); color: var(--warn); }
+.lib-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 2px; }
+.lib-actions .mono { font-family: var(--mono); font-size: 12px; padding: 0 6px; }
 
 @media (max-width: 768px) {
   .has-ardu .ide-ardu-toggle { display: inline-flex; }
   .ide-ardu { display: none; position: absolute; inset: 0; z-index: 5; max-width: none; min-width: 0; border-left: 0; }
   .ardu-front .ide-ardu:not([hidden]) { display: flex; }
   .ardu-title { display: none; }
+  .ardu-lib-btn span:not(.icon) { display: none; }
+  .ardu-board { max-width: 118px; }
   .ardu-send-input, .ardu-row .input, .ardu-bar .input, .ardu-send .input { font-size: 16px; } /* iOS 확대 방지 */
   .ardu-row > span:first-child { width: 68px; }
   .ide-home-head { flex-wrap: wrap; }

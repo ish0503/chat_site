@@ -71,6 +71,16 @@ export class DataService extends Emitter {
     return api.compileSketch(config.serverUrl, this.token, body);
   }
 
+  async arduinoLibraries() {
+    if (!this.isOnline || !config.serverUrl || !this.token) throw new OpError('offline');
+    return api.arduinoLibraries(config.serverUrl, this.token);
+  }
+
+  async arduinoLibraryAction(id, action) {
+    if (!this.isOnline || !config.serverUrl || !this.token) throw new OpError('offline');
+    return api.arduinoLibraryAction(config.serverUrl, this.token, id, action);
+  }
+
   status() {
     return {
       mode: this.mode, needsLogin: this.needsLogin, pendingOps: this.pendingOps, serverUrl: config.serverUrl, error: this.lastError, lastSync: this.lastSync || 0,

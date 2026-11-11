@@ -1,0 +1,3007 @@
+[
+ {
+  "id": "DHT_sensor_library",
+  "name": "DHT sensor library",
+  "version": "1.4.7",
+  "author": "Adafruit",
+  "src": "github.com/adafruit/DHT_sensor_library-1.4.7.zip",
+  "sha256": "5c5d3881b49840c7be98cc0848a48930bbac364fadc7edb7965fe98f9bb1463f",
+  "headers": [
+   "DHT.h"
+  ],
+  "requires": [
+   "Adafruit_Unified_Sensor"
+  ],
+  "sim": "full",
+  "desc": "온습도 센서 DHT11 / DHT22"
+ },
+ {
+  "id": "Adafruit_Unified_Sensor",
+  "name": "Adafruit Unified Sensor",
+  "version": "1.1.15",
+  "author": "Adafruit",
+  "src": "github.com/adafruit/Adafruit_Unified_Sensor-1.1.15.zip",
+  "sha256": "d64cdec0b817535f568fc3b8b8d44e7e097749f5ab8040aea573f412a3cbaec6",
+  "headers": [
+   "Adafruit_Sensor.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "desc": "Adafruit 센서 라이브러리들이 함께 쓰는 공통 부분"
+ },
+ {
+  "id": "Adafruit_BMP280_Library",
+  "name": "Adafruit BMP280 Library",
+  "version": "3.0.0",
+  "author": "Adafruit",
+  "src": "github.com/adafruit/Adafruit_BMP280_Library-3.0.0.zip",
+  "sha256": "415531a76ae32f65290e23cf41b21360244259e953838dd7c4d5ff571283e02e",
+  "headers": [
+   "Adafruit_BMP280.h"
+  ],
+  "requires": [
+   "Adafruit_Unified_Sensor",
+   "Adafruit_BusIO"
+  ],
+  "sim": "full",
+  "desc": "기압 · 고도 · 온도 센서 BMP280"
+ },
+ {
+  "id": "Adafruit_BusIO",
+  "name": "Adafruit BusIO",
+  "version": "1.17.4",
+  "author": "Adafruit",
+  "src": "github.com/adafruit/Adafruit_BusIO-1.17.4.zip",
+  "sha256": "c7bab1b6c6eee64b50964c8e149b795719a01f1d9dfcdcef170b35daa696349b",
+  "headers": [
+   "Adafruit_I2CDevice.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "desc": "Adafruit 라이브러리들이 I2C · SPI 통신에 쓰는 공통 부분"
+ },
+ {
+  "id": "Adafruit_MPU6050",
+  "name": "Adafruit MPU6050",
+  "version": "2.2.9",
+  "author": "Adafruit",
+  "src": "github.com/adafruit/Adafruit_MPU6050-2.2.9.zip",
+  "sha256": "acaad12ee2399f3225e6725e421d92699b006d7359cdda6ea5281c6b832cfc56",
+  "headers": [
+   "Adafruit_MPU6050.h"
+  ],
+  "requires": [
+   "Adafruit_Unified_Sensor",
+   "Adafruit_BusIO"
+  ],
+  "sim": "full",
+  "desc": "가속도 · 자이로 센서 MPU6050 (m/s², rad/s 단위)"
+ },
+ {
+  "id": "MPU6050",
+  "name": "MPU6050 (I2Cdev)",
+  "version": "1.4.5",
+  "author": "Electronic Cats",
+  "src": "github.com/ElectronicCats/MPU6050-1.4.5.zip",
+  "sha256": "461cd421d995f56ace37f19d0a6d5443297057a634d357eb4ad54933fc6afce1",
+  "headers": [
+   "MPU6050.h",
+   "I2Cdev.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "desc": "MPU6050 의 원시값을 읽는 라이브러리 (getMotion6)"
+ },
+ {
+  "id": "TinyGPSPlus",
+  "name": "TinyGPSPlus",
+  "version": "1.0.3",
+  "author": "Mikal Hart",
+  "src": "github.com/mikalhart/TinyGPSPlus-1.0.3.zip",
+  "sha256": "4f057c0dfa1f047a968eb00fb2ee98e33e07448493fbf5209c82c2a8a3281cc2",
+  "headers": [
+   "TinyGPS++.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "desc": "GPS 모듈이 보내는 NMEA 문장에서 위치 · 속도 · 시각을 읽음"
+ },
+ {
+  "id": "HX711",
+  "name": "HX711 Arduino Library",
+  "version": "0.7.5",
+  "author": "Bogdan Necula",
+  "src": "github.com/bogde/HX711_Arduino_Library-0.7.5.zip",
+  "sha256": "11a72d1d462a0306e8e0c5cf33d215cefded2e9c9b7ce05e1f1d2d42b47291f6",
+  "headers": [
+   "HX711.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "desc": "로드셀(무게 센서) 증폭기 HX711"
+ },
+ {
+  "id": "LiquidCrystal_I2C",
+  "name": "LiquidCrystal I2C",
+  "version": "1.1.2",
+  "author": "Frank de Brabander",
+  "src": "github.com/johnrickman/LiquidCrystal_I2C-1.1.2.zip",
+  "sha256": "7f288f4aa7ad33a25122727b057e49c48ef5f0d3a4943b7aca33ed2b78982adb",
+  "headers": [
+   "LiquidCrystal_I2C.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "desc": "I2C 로 연결하는 글자 LCD (16x2)"
+ },
+ {
+  "id": "Servo",
+  "name": "Servo",
+  "version": "1.3.0",
+  "author": "Arduino",
+  "src": "github.com/arduino-libraries/Servo-1.3.0.zip",
+  "sha256": "d25b0d77f10a810d24876c570410f32cc3129f9cc3d0370c861a278b969b4b38",
+  "headers": [
+   "Servo.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "desc": "서보 모터를 각도로 움직임"
+ },
+ {
+  "id": "ArduinoJson",
+  "name": "ArduinoJson",
+  "version": "7.4.3",
+  "author": "Benoit Blanchon",
+  "src": "github.com/bblanchon/ArduinoJson-7.4.3.zip",
+  "sha256": "cd8d2f7e4f06eb7e215beecb0de5326a82d047a994e84246572ad73ddc52746f",
+  "headers": [
+   "ArduinoJson.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "desc": "JSON 만들기 · 읽기"
+ },
+ {
+  "id": "NewPing",
+  "name": "NewPing",
+  "version": "1.9.7",
+  "author": "Tim Eckel",
+  "src": "bitbucket.org/teckel12/NewPing-1.9.7.zip",
+  "sha256": "7f4c4ef7f39a1ce8a6bf05580717712fc3e669ee5b0c343479569d5e2e374564",
+  "headers": [
+   "NewPing.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "desc": "초음파 거리 센서(HC-SR04)를 간단히 읽음: sonar.ping_cm()"
+ },
+ {
+  "id": "Bounce2",
+  "name": "Bounce2",
+  "version": "2.71.0",
+  "author": "Thomas O Fredericks",
+  "src": "github.com/thomasfredericks/Bounce2-2.71.0.zip",
+  "sha256": "fe3bd7694722ec5f57fcee8d6fcc1580e878da72e0b40d39bacc22c3f866a9a1",
+  "headers": [
+   "Bounce2.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "desc": "버튼의 떨림(채터링)을 걸러 눌림 · 뗌을 깔끔하게 감지"
+ },
+ {
+  "id": "TimerOne",
+  "name": "TimerOne",
+  "version": "1.1.1",
+  "author": "Paul Stoffregen 외",
+  "src": "github.com/PaulStoffregen/TimerOne-1.1.1.zip",
+  "sha256": "36f3b41658ed12181e6e2d7c8e2cc799d6f5ebfcfdfe111e776a6cc52a097d0a",
+  "headers": [
+   "TimerOne.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "desc": "타이머1 로 정해진 간격마다 함수를 실행 (타이머 인터럽트)"
+ },
+ {
+  "id": "Stepper",
+  "name": "Stepper",
+  "version": "1.1.3",
+  "author": "Arduino",
+  "src": "github.com/arduino-libraries/Stepper-1.1.3.zip",
+  "sha256": "85e91305a7c2a853ce9201d8261f150241be8c840d05a9adaff78412dcf66f7e",
+  "headers": [
+   "Stepper.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "desc": "스테퍼 모터 구동"
+ },
+ {
+  "id": "LiquidCrystal",
+  "name": "LiquidCrystal",
+  "version": "1.0.7",
+  "author": "Arduino, Adafruit",
+  "src": "github.com/arduino-libraries/LiquidCrystal-1.0.7.zip",
+  "sha256": "f7b14c42afbbdcfbe66073e6ef1e4cbaa03f5d11f52f9ab91c916b6ccac38434",
+  "headers": [
+   "LiquidCrystal.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "desc": "핀 6개로 직접 연결하는 글자 LCD"
+ },
+ {
+  "id": "OneWire",
+  "name": "OneWire",
+  "version": "2.3.8",
+  "author": "Paul Stoffregen 외",
+  "src": "github.com/PaulStoffregen/OneWire-2.3.8.zip",
+  "sha256": "dd76d1480a2f4c94348e8c8307ea74206d2936d9c80c73be67783fd200f2be17",
+  "headers": [
+   "OneWire.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "desc": "1-Wire 통신 (DS18B20 등)"
+ },
+ {
+  "id": "DallasTemperature",
+  "name": "DallasTemperature",
+  "version": "4.0.6",
+  "author": "Miles Burton",
+  "src": "github.com/milesburton/DallasTemperature-4.0.6.zip",
+  "sha256": "fb90dffd2bbd10b8eb5943968e8300ada5e4af17793b0f80c10359702d9de4e4",
+  "headers": [
+   "DallasTemperature.h"
+  ],
+  "requires": [
+   "OneWire"
+  ],
+  "sim": "full",
+  "desc": "방수 온도 센서 DS18B20"
+ },
+ {
+  "id": "Adafruit_NeoPixel",
+  "name": "Adafruit NeoPixel",
+  "version": "1.15.5",
+  "author": "Adafruit",
+  "src": "github.com/adafruit/Adafruit_NeoPixel-1.15.5.zip",
+  "sha256": "3d767caa011ab3078df7fe3c3e0456359ce2bc309eba343932690a2c1612fd16",
+  "headers": [
+   "Adafruit_NeoPixel.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "desc": "RGB LED 띠 NeoPixel (WS2812)"
+ },
+ {
+  "id": "RTClib",
+  "name": "RTClib",
+  "version": "2.1.4",
+  "author": "Adafruit",
+  "src": "github.com/adafruit/RTClib-2.1.4.zip",
+  "sha256": "8dc4bbf8f25e12353533778f13295e9fe12ed6a92d66a8e8c062b24d83fe70dd",
+  "headers": [
+   "RTClib.h"
+  ],
+  "requires": [
+   "Adafruit_BusIO"
+  ],
+  "sim": "full",
+  "desc": "시계 모듈 DS3231 / DS1307"
+ },
+ {
+  "id": "Adafruit_GFX_Library",
+  "name": "Adafruit GFX Library",
+  "version": "1.13.0",
+  "author": "Adafruit",
+  "src": "github.com/adafruit/Adafruit_GFX_Library-1.13.0.zip",
+  "sha256": "202ec716ff222fb08ffc544a5f315cb47b8630c35fbbc9944fc9f8c93d903924",
+  "headers": [
+   "Adafruit_GFX.h"
+  ],
+  "requires": [
+   "Adafruit_BusIO"
+  ],
+  "sim": "full",
+  "optional": true,
+  "desc": "화면에 점 · 선 · 글자를 그리는 공통 그래픽 라이브러리"
+ },
+ {
+  "id": "Adafruit_SSD1306",
+  "name": "Adafruit SSD1306",
+  "version": "2.5.17",
+  "author": "Adafruit",
+  "src": "github.com/adafruit/Adafruit_SSD1306-2.5.17.zip",
+  "sha256": "9b8a9c29a16576d66bce16ed9f6a731632fecbb477171f38a6bc033fda15dd06",
+  "headers": [
+   "Adafruit_SSD1306.h"
+  ],
+  "requires": [
+   "Adafruit_GFX_Library",
+   "Adafruit_BusIO"
+  ],
+  "sim": "full",
+  "optional": true,
+  "desc": "작은 OLED 화면 (128x64, I2C)"
+ },
+ {
+  "id": "Keypad",
+  "name": "Keypad",
+  "version": "3.1.1",
+  "author": "Mark Stanley, Alexander Brevig",
+  "src": "github.com/Chris--A/Keypad-3.1.1.zip",
+  "sha256": "816e366073a7ca0353b962a973ba3a7c6852f73f8cc2ccb8a6c5223807e5faf5",
+  "headers": [
+   "Keypad.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "4x4 숫자 키패드"
+ },
+ {
+  "id": "AccelStepper",
+  "name": "AccelStepper",
+  "version": "1.64.0",
+  "author": "Mike McCauley",
+  "src": "github.com/waspinator/AccelStepper-1.64.0.zip",
+  "sha256": "45d152991271f8480bc939a7f325e006bfa3695a865eda383770bb68f0140e05",
+  "headers": [
+   "AccelStepper.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "스테퍼 모터를 가속 · 감속하며 구동"
+ },
+ {
+  "id": "AceButton",
+  "name": "AceButton",
+  "version": "1.10.1",
+  "author": "Brian T. Park",
+  "src": "github.com/bxparks/AceButton-1.10.1.zip",
+  "sha256": "3cb58f702f47fe60ccca1633050bd010b232766acc9333eb6fd6cececd5933e3",
+  "headers": [
+   "AceButton.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "버튼 이벤트 (클릭 · 더블클릭 · 길게)"
+ },
+ {
+  "id": "ACS712",
+  "name": "ACS712",
+  "version": "0.4.1",
+  "author": "Rob Tillaart, Pete Thompson",
+  "src": "github.com/RobTillaart/ACS712-0.4.1.zip",
+  "sha256": "81c45fee8b4b839cd87ad466c7565e9cb2a6f1a4404b56a8c142db2f2cca9d3f",
+  "headers": [
+   "ACS712.h"
+  ],
+  "requires": [],
+  "sim": "pins",
+  "optional": true,
+  "desc": "전류 센서 ACS712"
+ },
+ {
+  "id": "Adafruit_ADS1X15",
+  "name": "Adafruit ADS1X15",
+  "version": "2.6.2",
+  "author": "Adafruit",
+  "src": "github.com/adafruit/Adafruit_ADS1X15-2.6.2.zip",
+  "sha256": "a7c0e3c936a98847034ce7e720cab964b6ca651dfd761a62b6d7b55374d9bacb",
+  "headers": [
+   "Adafruit_ADS1X15.h"
+  ],
+  "requires": [
+   "Adafruit_BusIO"
+  ],
+  "sim": "pins",
+  "optional": true,
+  "desc": "16비트 ADC ADS1115"
+ },
+ {
+  "id": "Adafruit_ADXL345",
+  "name": "Adafruit ADXL345",
+  "version": "1.3.4",
+  "author": "Adafruit",
+  "src": "github.com/adafruit/Adafruit_ADXL345-1.3.4.zip",
+  "sha256": "bf4220590813326fd9fa81261cc9830e71212ba0ba3265cd4734436a3b7a7d1e",
+  "headers": [
+   "Adafruit_ADXL345_U.h"
+  ],
+  "requires": [
+   "Adafruit_Unified_Sensor",
+   "Adafruit_BusIO"
+  ],
+  "sim": "pins",
+  "optional": true,
+  "desc": "가속도 센서 ADXL345"
+ },
+ {
+  "id": "Adafruit_AHTX0",
+  "name": "Adafruit AHTX0",
+  "version": "2.0.6",
+  "author": "Adafruit",
+  "src": "github.com/adafruit/Adafruit_AHTX0-2.0.6.zip",
+  "sha256": "441d8b785b9a2f6c7517976d1ce2620f359488e73bf3dc475234b5e11a959006",
+  "headers": [
+   "Adafruit_AHTX0.h"
+  ],
+  "requires": [
+   "Adafruit_Unified_Sensor",
+   "Adafruit_BusIO",
+   "Adafruit_SH110X"
+  ],
+  "sim": "pins",
+  "optional": true,
+  "desc": "온습도 센서 AHT10 / AHT20"
+ },
+ {
+  "id": "Adafruit_BME280_Library",
+  "name": "Adafruit BME280 Library",
+  "version": "2.3.0",
+  "author": "Adafruit",
+  "src": "github.com/adafruit/Adafruit_BME280_Library-2.3.0.zip",
+  "sha256": "5aa74162cd944abb85143d2e9daa18b6dbe64f167f54c95d4e9e4f283573cfe5",
+  "headers": [
+   "Adafruit_BME280.h"
+  ],
+  "requires": [
+   "Adafruit_Unified_Sensor",
+   "Adafruit_BusIO"
+  ],
+  "sim": "pins",
+  "optional": true,
+  "desc": "온도 · 습도 · 기압 센서 BME280"
+ },
+ {
+  "id": "Adafruit_BME680_Library",
+  "name": "Adafruit BME680 Library",
+  "version": "2.0.6",
+  "author": "Adafruit",
+  "src": "github.com/adafruit/Adafruit_BME680_Library-2.0.6.zip",
+  "sha256": "824ea4a31716b41cab109e547971ab7ae58e5d24c8b2eea99d22ae15b936996a",
+  "headers": [
+   "bme68x.h"
+  ],
+  "requires": [
+   "Adafruit_Unified_Sensor",
+   "Adafruit_GFX_Library",
+   "Adafruit_SSD1306",
+   "Adafruit_BusIO"
+  ],
+  "sim": "pins",
+  "optional": true,
+  "desc": "온도 · 습도 · 기압 · 가스 센서 BME680"
+ },
+ {
+  "id": "Adafruit_BMP085_Library",
+  "name": "Adafruit BMP085 Library",
+  "version": "1.2.4",
+  "author": "Adafruit",
+  "src": "github.com/adafruit/Adafruit_BMP085_Library-1.2.4.zip",
+  "sha256": "2622bec3a1b034366e6fcf8dcc4226749df93248dae3286390a3f1529ad459a9",
+  "headers": [
+   "Adafruit_BMP085.h"
+  ],
+  "requires": [
+   "Adafruit_Unified_Sensor",
+   "Adafruit_BusIO"
+  ],
+  "sim": "pins",
+  "optional": true,
+  "desc": "기압 센서 BMP085 / BMP180"
+ },
+ {
+  "id": "Adafruit_BMP3XX_Library",
+  "name": "Adafruit BMP3XX Library",
+  "version": "2.1.6",
+  "author": "Adafruit",
+  "src": "github.com/adafruit/Adafruit_BMP3XX_Library-2.1.6.zip",
+  "sha256": "fde08bebd3e4c7f45098b0827d3a6001fc3612095c29784d68d1c308b7892301",
+  "headers": [
+   "bmp3.h"
+  ],
+  "requires": [
+   "Adafruit_Unified_Sensor",
+   "Adafruit_BusIO"
+  ],
+  "sim": "pins",
+  "optional": true,
+  "desc": "기압 센서 BMP388 / BMP390"
+ },
+ {
+  "id": "Adafruit_BNO055",
+  "name": "Adafruit BNO055",
+  "version": "1.6.4",
+  "author": "Adafruit",
+  "src": "github.com/adafruit/Adafruit_BNO055-1.6.4.zip",
+  "sha256": "5c20e194016faad4c9c90926ec7254e33e68e222fdfd5179283c0d0aa7f43650",
+  "headers": [
+   "Adafruit_BNO055.h"
+  ],
+  "requires": [
+   "Adafruit_Unified_Sensor",
+   "Adafruit_BusIO"
+  ],
+  "sim": "pins",
+  "optional": true,
+  "desc": "9축 자세 센서 BNO055"
+ },
+ {
+  "id": "Adafruit_CCS811_Library",
+  "name": "Adafruit CCS811 Library",
+  "version": "1.1.3",
+  "author": "Adafruit",
+  "src": "github.com/adafruit/Adafruit_CCS811_Library-1.1.3.zip",
+  "sha256": "fef54f03d15ed34131935e25cc58285341787b3b4180d864b9682fb05ef0cfd6",
+  "headers": [
+   "Adafruit_CCS811.h"
+  ],
+  "requires": [
+   "Adafruit_SSD1306",
+   "Adafruit_GFX_Library",
+   "Adafruit_BusIO"
+  ],
+  "sim": "pins",
+  "optional": true,
+  "desc": "공기질 센서 CCS811"
+ },
+ {
+  "id": "Adafruit_DotStar",
+  "name": "Adafruit DotStar",
+  "version": "1.2.5",
+  "author": "Adafruit",
+  "src": "github.com/adafruit/Adafruit_DotStar-1.2.5.zip",
+  "sha256": "f801e2f57697c61d00e001b361e9a772c624333e07037d40f678bc99e91d1d41",
+  "headers": [
+   "Adafruit_DotStar.h"
+  ],
+  "requires": [
+   "Adafruit_BusIO"
+  ],
+  "sim": "pins",
+  "optional": true,
+  "desc": "DotStar(APA102) RGB LED 띠"
+ },
+ {
+  "id": "Adafruit_Fingerprint_Sensor_Library",
+  "name": "Adafruit Fingerprint Sensor Library",
+  "version": "2.1.4",
+  "author": "Adafruit",
+  "src": "github.com/adafruit/Adafruit_Fingerprint_Sensor_Library-2.1.4.zip",
+  "sha256": "04e2570c985c9069cfc8c2377d9ab8d55e5b01cf5232d2c8c2753453cbfeceba",
+  "headers": [
+   "Adafruit_Fingerprint.h"
+  ],
+  "requires": [],
+  "sim": "pins",
+  "optional": true,
+  "desc": "지문 인식 센서"
+ },
+ {
+  "id": "Adafruit_FONA_Library",
+  "name": "Adafruit FONA Library",
+  "version": "2.0.6",
+  "author": "Adafruit",
+  "src": "github.com/adafruit/Adafruit_FONA_Library-2.0.6.zip",
+  "sha256": "4322c3b037c03cfc4de2f2f60925844b8fbdf83ad6d67b4095dfd717b0fa10e9",
+  "headers": [
+   "Adafruit_FONA.h"
+  ],
+  "requires": [],
+  "sim": "pins",
+  "optional": true,
+  "desc": "(다른 라이브러리가 함께 쓰는 부분) Arduino library for the Adafruit FONA"
+ },
+ {
+  "id": "Adafruit_GPS_Library",
+  "name": "Adafruit GPS Library",
+  "version": "1.9.0",
+  "author": "Adafruit",
+  "src": "github.com/adafruit/Adafruit_GPS_Library-1.9.0.zip",
+  "sha256": "b7756acb7b3fdde12426b43b29ee32be716800688355cd088a45d44c4f1e4071",
+  "headers": [
+   "NMEA_data.h"
+  ],
+  "requires": [],
+  "sim": "pins",
+  "optional": true,
+  "desc": "GPS 모듈 (Adafruit 구현)"
+ },
+ {
+  "id": "Adafruit_HMC5883_Unified",
+  "name": "Adafruit HMC5883 Unified",
+  "version": "1.2.4",
+  "author": "Adafruit",
+  "src": "github.com/adafruit/Adafruit_HMC5883_Unified-1.2.4.zip",
+  "sha256": "cc69214ccde000bea8f11ee9947836f7b93446a2c99586157e50c0ec7ffb2c85",
+  "headers": [
+   "Adafruit_HMC5883_U.h"
+  ],
+  "requires": [
+   "Adafruit_Unified_Sensor"
+  ],
+  "sim": "pins",
+  "optional": true,
+  "desc": "나침반 센서 HMC5883L"
+ },
+ {
+  "id": "Adafruit_HTU21DF_Library",
+  "name": "Adafruit HTU21DF Library",
+  "version": "1.1.2",
+  "author": "Adafruit",
+  "src": "github.com/adafruit/Adafruit_HTU21DF_Library-1.1.2.zip",
+  "sha256": "880caff4918f647a889a8c27e5b0d32e98502ff076a8785cb8e03d4fb68c33c0",
+  "headers": [
+   "Adafruit_HTU21DF.h"
+  ],
+  "requires": [
+   "Adafruit_Unified_Sensor",
+   "Adafruit_BusIO"
+  ],
+  "sim": "pins",
+  "optional": true,
+  "desc": "온습도 센서 HTU21D"
+ },
+ {
+  "id": "Adafruit_ILI9341",
+  "name": "Adafruit ILI9341",
+  "version": "1.7.0",
+  "author": "Adafruit",
+  "src": "github.com/adafruit/Adafruit_ILI9341-1.7.0.zip",
+  "sha256": "1eb034e7ff1954c463f4668cbba3b2242edafc4334d402d9aa9e4b49348046ea",
+  "headers": [
+   "Adafruit_ILI9341.h"
+  ],
+  "requires": [
+   "Adafruit_GFX_Library",
+   "Adafruit_STMPE610",
+   "Adafruit_TouchScreen",
+   "Adafruit_TSC2007"
+  ],
+  "sim": "pins",
+  "optional": true,
+  "desc": "2.8인치 컬러 TFT 화면 (ILI9341)"
+ },
+ {
+  "id": "Adafruit_INA219",
+  "name": "Adafruit INA219",
+  "version": "1.2.3",
+  "author": "Adafruit",
+  "src": "github.com/adafruit/Adafruit_INA219-1.2.3.zip",
+  "sha256": "7187663dc53a87c2d4d83216ccd66f680453c9e9b48416d4632d6f00632e631e",
+  "headers": [
+   "Adafruit_INA219.h"
+  ],
+  "requires": [
+   "Adafruit_NeoPixel",
+   "Adafruit_GFX_Library",
+   "Adafruit_SSD1306",
+   "Adafruit_BusIO"
+  ],
+  "sim": "pins",
+  "optional": true,
+  "desc": "전류 · 전압 센서 INA219"
+ },
+ {
+  "id": "Adafruit_LED_Backpack_Library",
+  "name": "Adafruit LED Backpack Library",
+  "version": "1.5.1",
+  "author": "Adafruit",
+  "src": "github.com/adafruit/Adafruit_LED_Backpack_Library-1.5.1.zip",
+  "sha256": "ea023e281a9199c10a51d4e373346cb116b542a2702a3fa4142c53859eaaa433",
+  "headers": [
+   "Adafruit_LEDBackpack.h"
+  ],
+  "requires": [
+   "Adafruit_GFX_Library",
+   "WaveHC",
+   "RTClib",
+   "Adafruit_GPS_Library"
+  ],
+  "sim": "pins",
+  "optional": true,
+  "desc": "HT16K33 7세그먼트 · LED 매트릭스"
+ },
+ {
+  "id": "Adafruit_LIS3DH",
+  "name": "Adafruit LIS3DH",
+  "version": "1.3.0",
+  "author": "Adafruit",
+  "src": "github.com/adafruit/Adafruit_LIS3DH-1.3.0.zip",
+  "sha256": "95d652abd0ed616429c124bc6a8287cf59d32af93f258c6bea61dbea3a999850",
+  "headers": [
+   "Adafruit_LIS3DH.h"
+  ],
+  "requires": [
+   "Adafruit_Unified_Sensor",
+   "Adafruit_BusIO"
+  ],
+  "sim": "pins",
+  "optional": true,
+  "desc": "가속도 센서 LIS3DH"
+ },
+ {
+  "id": "Adafruit_MAX31855_library",
+  "name": "Adafruit MAX31855 library",
+  "version": "1.4.2",
+  "author": "Adafruit",
+  "src": "github.com/adafruit/Adafruit_MAX31855_library-1.4.2.zip",
+  "sha256": "f610ed2d257b490867818cf18a842552fc1800f669a21ce3805c756cd5adb790",
+  "headers": [
+   "Adafruit_MAX31855.h"
+  ],
+  "requires": [
+   "Adafruit_BusIO",
+   "LiquidCrystal"
+  ],
+  "sim": "pins",
+  "optional": true,
+  "desc": "열전대 온도 MAX31855"
+ },
+ {
+  "id": "Adafruit_MCP23017_Arduino_Library",
+  "name": "Adafruit MCP23017 Arduino Library",
+  "version": "2.3.2",
+  "author": "Adafruit",
+  "src": "github.com/adafruit/Adafruit_MCP23017_Arduino_Library-2.3.2.zip",
+  "sha256": "23c1bddae8b0c184b9e297885ef615a3da060ca39c56c9292372aafb6b441da6",
+  "headers": [
+   "Adafruit_MCP23X08.h"
+  ],
+  "requires": [
+   "Adafruit_BusIO"
+  ],
+  "sim": "pins",
+  "optional": true,
+  "desc": "I2C 입출력 확장 MCP23017"
+ },
+ {
+  "id": "Adafruit_MCP4725",
+  "name": "Adafruit MCP4725",
+  "version": "2.0.2",
+  "author": "Adafruit",
+  "src": "github.com/adafruit/Adafruit_MCP4725-2.0.2.zip",
+  "sha256": "18285d595e6ebb809eb86c7855030cfef8682bcfb90f79008f5934c3b49b339a",
+  "headers": [
+   "Adafruit_MCP4725.h"
+  ],
+  "requires": [
+   "Adafruit_BusIO"
+  ],
+  "sim": "pins",
+  "optional": true,
+  "desc": "12비트 DAC MCP4725"
+ },
+ {
+  "id": "Adafruit_MLX90614_Library",
+  "name": "Adafruit MLX90614 Library",
+  "version": "2.1.7",
+  "author": "Adafruit",
+  "src": "github.com/adafruit/Adafruit_MLX90614_Library-2.1.7.zip",
+  "sha256": "9fd110a82e440df3a6001808c315449ab4d749e61f66e90e4d300bb2003e0670",
+  "headers": [
+   "Adafruit_MLX90614.h"
+  ],
+  "requires": [
+   "Adafruit_BusIO"
+  ],
+  "sim": "pins",
+  "optional": true,
+  "desc": "비접촉 적외선 온도 센서 MLX90614"
+ },
+ {
+  "id": "Adafruit_Motor_Shield_library",
+  "name": "Adafruit Motor Shield library",
+  "version": "1.0.1",
+  "author": "Adafruit",
+  "src": "github.com/adafruit/Adafruit_Motor_Shield_library-1.0.1.zip",
+  "sha256": "d260918ebe6c0272e33b56dabe199bec9a24ed7ab6d2aa2831e5684d919feb86",
+  "headers": [
+   "AFMotor.h"
+  ],
+  "requires": [],
+  "sim": "pins",
+  "optional": true,
+  "desc": "모터 쉴드 v1 (DC · 스테퍼)"
+ },
+ {
+  "id": "Adafruit_Motor_Shield_V2_Library",
+  "name": "Adafruit Motor Shield V2 Library",
+  "version": "1.1.4",
+  "author": "Adafruit",
+  "src": "github.com/adafruit/Adafruit_Motor_Shield_V2_Library-1.1.4.zip",
+  "sha256": "dfb46be098aec07ea9e1237f8908594354822985b11f75f8744b984f2a961c31",
+  "headers": [
+   "Adafruit_MotorShield.h"
+  ],
+  "requires": [
+   "Adafruit_ILI9341",
+   "Adafruit_GFX_Library",
+   "Adafruit_SSD1306",
+   "AccelStepper",
+   "Servo"
+  ],
+  "sim": "pins",
+  "optional": true,
+  "desc": "모터 쉴드 v2 (I2C)"
+ },
+ {
+  "id": "Adafruit_MQTT_Library",
+  "name": "Adafruit MQTT Library",
+  "version": "2.6.6",
+  "author": "Adafruit",
+  "src": "github.com/adafruit/Adafruit_MQTT_Library-2.6.6.zip",
+  "sha256": "e41418354059ffdcbd4e891bc6506af44a52f60f7360da0a941013c31856d42e",
+  "headers": [
+   "Adafruit_MQTT.h"
+  ],
+  "requires": [
+   "Adafruit_SleepyDog_Library",
+   "Adafruit_FONA_Library"
+  ],
+  "sim": "pins",
+  "optional": true,
+  "desc": "MQTT (Adafruit IO)"
+ },
+ {
+  "id": "Adafruit_NeoMatrix",
+  "name": "Adafruit NeoMatrix",
+  "version": "1.3.3",
+  "author": "Adafruit",
+  "src": "github.com/adafruit/Adafruit_NeoMatrix-1.3.3.zip",
+  "sha256": "2eb347c22552a6e666265af7001777186df0765cd62b4fbb2779450dd51f4e01",
+  "headers": [
+   "Adafruit_NeoMatrix.h"
+  ],
+  "requires": [
+   "Adafruit_NeoPixel",
+   "Adafruit_GFX_Library"
+  ],
+  "sim": "full",
+  "optional": true,
+  "desc": "NeoPixel 을 격자 화면처럼 쓰기"
+ },
+ {
+  "id": "Adafruit_PCD8544_Nokia_5110_LCD_library",
+  "name": "Adafruit PCD8544 Nokia 5110 LCD library",
+  "version": "2.0.3",
+  "author": "Adafruit",
+  "src": "github.com/adafruit/Adafruit_PCD8544_Nokia_5110_LCD_library-2.0.3.zip",
+  "sha256": "2335c1ca5f4900f30920456544a76dfd84d659874231013dd3413439a2cbe3cf",
+  "headers": [
+   "Adafruit_PCD8544.h"
+  ],
+  "requires": [
+   "Adafruit_GFX_Library",
+   "Adafruit_BusIO"
+  ],
+  "sim": "pins",
+  "optional": true,
+  "desc": "노키아 5110 흑백 LCD"
+ },
+ {
+  "id": "Adafruit_PN532",
+  "name": "Adafruit PN532",
+  "version": "1.3.4",
+  "author": "Adafruit",
+  "src": "github.com/adafruit/Adafruit_PN532-1.3.4.zip",
+  "sha256": "8d2e541a3cbb1f72dc848ea14b186dbbda9c39371a506eb2519912bbedf5fa6c",
+  "headers": [
+   "Adafruit_PN532.h"
+  ],
+  "requires": [
+   "Adafruit_BusIO"
+  ],
+  "sim": "pins",
+  "optional": true,
+  "desc": "NFC 리더 PN532"
+ },
+ {
+  "id": "Adafruit_PWM_Servo_Driver_Library",
+  "name": "Adafruit PWM Servo Driver Library",
+  "version": "3.0.3",
+  "author": "Adafruit",
+  "src": "github.com/adafruit/Adafruit_PWM_Servo_Driver_Library-3.0.3.zip",
+  "sha256": "320902ab529a1cfcf4df35212fa0c30293956a6a456b198820df58de3504dbc6",
+  "headers": [
+   "Adafruit_PWMServoDriver.h"
+  ],
+  "requires": [
+   "Adafruit_BusIO"
+  ],
+  "sim": "pins",
+  "optional": true,
+  "desc": "PCA9685 16채널 서보 드라이버"
+ },
+ {
+  "id": "Adafruit_seesaw_Library",
+  "name": "Adafruit seesaw Library",
+  "version": "1.7.9",
+  "author": "Adafruit",
+  "src": "github.com/adafruit/Adafruit_seesaw_Library-1.7.9.zip",
+  "sha256": "42d054ad49c386d9a9757c5c36ad5d25115c4524dc8243515cc283d57ef39482",
+  "headers": [
+   "seesaw_motor.h"
+  ],
+  "requires": [
+   "Adafruit_BusIO",
+   "Adafruit_ST7735_and_ST7789_Library"
+  ],
+  "sim": "pins",
+  "optional": true,
+  "desc": "(다른 라이브러리가 함께 쓰는 부분) This is a library for the Adafruit seesaw helper IC"
+ },
+ {
+  "id": "Adafruit_SGP30_Sensor",
+  "name": "Adafruit SGP30 Sensor",
+  "version": "2.0.3",
+  "author": "Adafruit",
+  "src": "github.com/adafruit/Adafruit_SGP30_Sensor-2.0.3.zip",
+  "sha256": "b294fcc816b18288c85d1baeb82a4cdd1cc1ffddf0ddf1bdc72282a0edbb164d",
+  "headers": [
+   "Adafruit_SGP30.h"
+  ],
+  "requires": [
+   "Adafruit_BusIO"
+  ],
+  "sim": "pins",
+  "optional": true,
+  "desc": "공기질 센서 SGP30"
+ },
+ {
+  "id": "Adafruit_SH110X",
+  "name": "Adafruit SH110X",
+  "version": "2.1.15",
+  "author": "Adafruit",
+  "src": "github.com/adafruit/Adafruit_SH110X-2.1.15.zip",
+  "sha256": "24b29e1315d5cd42ebe3c1f9d0bc26d200f501a3e79a1f7b8a7284a17a0776be",
+  "headers": [
+   "Adafruit_SH110X.h"
+  ],
+  "requires": [
+   "Adafruit_GFX_Library",
+   "Adafruit_BusIO"
+  ],
+  "sim": "pins",
+  "optional": true,
+  "desc": "SH1106 / SH1107 OLED 화면"
+ },
+ {
+  "id": "Adafruit_SHT31_Library",
+  "name": "Adafruit SHT31 Library",
+  "version": "2.2.2",
+  "author": "Adafruit",
+  "src": "github.com/adafruit/Adafruit_SHT31_Library-2.2.2.zip",
+  "sha256": "3b5aad3dabb11d5738d363e41abfc396362305c9dad389e256fee062b2ce4af3",
+  "headers": [
+   "Adafruit_SHT31.h"
+  ],
+  "requires": [
+   "Adafruit_BusIO"
+  ],
+  "sim": "pins",
+  "optional": true,
+  "desc": "온습도 센서 SHT31"
+ },
+ {
+  "id": "Adafruit_Si7021_Library",
+  "name": "Adafruit Si7021 Library",
+  "version": "1.5.3",
+  "author": "Adafruit",
+  "src": "github.com/adafruit/Adafruit_Si7021_Library-1.5.3.zip",
+  "sha256": "d99135e5f87f1d8cbece52426a38c48b96ad95f024cc301aef26b6301ec4efb9",
+  "headers": [
+   "Adafruit_Si7021.h"
+  ],
+  "requires": [
+   "Adafruit_BusIO"
+  ],
+  "sim": "pins",
+  "optional": true,
+  "desc": "온습도 센서 Si7021"
+ },
+ {
+  "id": "Adafruit_SleepyDog_Library",
+  "name": "Adafruit SleepyDog Library",
+  "version": "1.8.4",
+  "author": "Adafruit",
+  "src": "github.com/adafruit/Adafruit_SleepyDog_Library-1.8.4.zip",
+  "sha256": "45bd8053814622287a14881729cf181935a32903dd7ae72883da5690c5544a86",
+  "headers": [
+   "Adafruit_SleepyDog.h"
+  ],
+  "requires": [],
+  "sim": "pins",
+  "optional": true,
+  "desc": "워치독 · 절전"
+ },
+ {
+  "id": "Adafruit_ST7735_and_ST7789_Library",
+  "name": "Adafruit ST7735 and ST7789 Library",
+  "version": "1.12.0",
+  "author": "Adafruit",
+  "src": "github.com/adafruit/Adafruit_ST7735_and_ST7789_Library-1.12.0.zip",
+  "sha256": "60a88b11a026559712154df97488cc7512b72d5ac1b8ec91c8cace9c2ef853a8",
+  "headers": [
+   "Adafruit_ST7735.h"
+  ],
+  "requires": [
+   "Adafruit_GFX_Library",
+   "Adafruit_seesaw_Library",
+   "SD"
+  ],
+  "sim": "pins",
+  "optional": true,
+  "desc": "작은 컬러 TFT 화면 (ST7735 / ST7789)"
+ },
+ {
+  "id": "Adafruit_STMPE610",
+  "name": "Adafruit STMPE610",
+  "version": "1.1.6",
+  "author": "Adafruit",
+  "src": "github.com/adafruit/Adafruit_STMPE610-1.1.6.zip",
+  "sha256": "5a9cea9485f11c8ccf7b2b56ffc90f0c8d3a4b0e48c77d7feadccc1873057753",
+  "headers": [
+   "Adafruit_STMPE610.h"
+  ],
+  "requires": [],
+  "sim": "pins",
+  "optional": true,
+  "desc": "(다른 라이브러리가 함께 쓰는 부분) Arduino library for STMPE610/811 resistive touch screen controllers"
+ },
+ {
+  "id": "Adafruit_TCS34725",
+  "name": "Adafruit TCS34725",
+  "version": "1.4.4",
+  "author": "Adafruit",
+  "src": "github.com/adafruit/Adafruit_TCS34725-1.4.4.zip",
+  "sha256": "95d281f847b9837955b330253ea25bc913f807206e65bb2ad43f0ae1f14c486e",
+  "headers": [
+   "Adafruit_TCS34725.h"
+  ],
+  "requires": [
+   "Adafruit_BusIO"
+  ],
+  "sim": "pins",
+  "optional": true,
+  "desc": "색 센서 TCS34725"
+ },
+ {
+  "id": "Adafruit_Thermal_Printer_Library",
+  "name": "Adafruit Thermal Printer Library",
+  "version": "1.4.1",
+  "author": "Adafruit",
+  "src": "github.com/adafruit/Adafruit_Thermal_Printer_Library-1.4.1.zip",
+  "sha256": "5b35811c877e0d46d7814a1725d209b699e673c77acea2713a69f0d4bbe01e44",
+  "headers": [
+   "Adafruit_Thermal.h"
+  ],
+  "requires": [],
+  "sim": "pins",
+  "optional": true,
+  "desc": "영수증 프린터"
+ },
+ {
+  "id": "Adafruit_TouchScreen",
+  "name": "Adafruit TouchScreen",
+  "version": "1.1.6",
+  "author": "Adafruit",
+  "src": "github.com/adafruit/Adafruit_TouchScreen-1.1.6.zip",
+  "sha256": "5e5a00da7bab6da6064d156f22cfd865730b6cb67664133806c041ebf9635965",
+  "headers": [
+   "TouchScreen.h"
+  ],
+  "requires": [],
+  "sim": "pins",
+  "optional": true,
+  "desc": "저항막 터치스크린"
+ },
+ {
+  "id": "Adafruit_TSC2007",
+  "name": "Adafruit TSC2007",
+  "version": "1.1.2",
+  "author": "Adafruit",
+  "src": "github.com/adafruit/Adafruit_TSC2007-1.1.2.zip",
+  "sha256": "4024ced1ffd58d1adfddc5b835e7824acc6de156fe14f7c939bd9d516a21fa64",
+  "headers": [
+   "Adafruit_TSC2007.h"
+  ],
+  "requires": [
+   "Adafruit_BusIO",
+   "Adafruit_SH110X"
+  ],
+  "sim": "pins",
+  "optional": true,
+  "desc": "(다른 라이브러리가 함께 쓰는 부분) Arduino library for the TSC2007 resistive touch screen drivers in the Adafruit shop"
+ },
+ {
+  "id": "Adafruit_TSL2561",
+  "name": "Adafruit TSL2561",
+  "version": "1.1.3",
+  "author": "Adafruit",
+  "src": "github.com/adafruit/Adafruit_TSL2561-1.1.3.zip",
+  "sha256": "12c0a290ccbfd359b775e4b1ff99bf1f5b385bf4cebd77cc082bd5d9d1b93580",
+  "headers": [
+   "Adafruit_TSL2561_U.h"
+  ],
+  "requires": [
+   "Adafruit_Unified_Sensor"
+  ],
+  "sim": "pins",
+  "optional": true,
+  "desc": "조도 센서 TSL2561"
+ },
+ {
+  "id": "AltSoftSerial",
+  "name": "AltSoftSerial",
+  "version": "1.4.0",
+  "author": "Paul Stoffregen",
+  "src": "github.com/PaulStoffregen/AltSoftSerial-1.4.0.zip",
+  "sha256": "1e80f71bff2f74f3781fcaa56e5bede3b43d27d834e625c2c67d1fd886b00418",
+  "headers": [
+   "AltSoftSerial.h"
+  ],
+  "requires": [],
+  "sim": "pins",
+  "optional": true,
+  "desc": "더 정확한 소프트웨어 시리얼"
+ },
+ {
+  "id": "arduino_timer",
+  "name": "arduino-timer",
+  "version": "3.0.1",
+  "author": "Michael Contreras",
+  "src": "github.com/contrem/arduino_timer-3.0.1.zip",
+  "sha256": "50b79a85443cf6a9db854edd2ffea96cd89751af06e6a4e19538d4b14b47462b",
+  "headers": [
+   "arduino-timer.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "delay 없이 쓰는 타이머"
+ },
+ {
+  "id": "ArduinoHttpClient",
+  "name": "ArduinoHttpClient",
+  "version": "0.6.2",
+  "author": "Arduino",
+  "src": "github.com/arduino-libraries/ArduinoHttpClient-0.6.2.zip",
+  "sha256": "4e1f20d155ac1d4f71a324c0a4aa291c69e98ad7dbfaba7fcbccfd7493458954",
+  "headers": [
+   "ArduinoHttpClient.h"
+  ],
+  "requires": [],
+  "sim": "pins",
+  "optional": true,
+  "desc": "HTTP 요청 보내기"
+ },
+ {
+  "id": "ArduinoLog",
+  "name": "ArduinoLog",
+  "version": "1.1.1",
+  "author": "Thijs Elenbaas",
+  "src": "github.com/thijse/ArduinoLog-1.1.1.zip",
+  "sha256": "7010f22aa4c177e399c145b00da67031801f33f90d35d37edee00433a97e4085",
+  "headers": [
+   "ArduinoLog.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "단계별 로그 출력"
+ },
+ {
+  "id": "ArduinoSTL",
+  "name": "ArduinoSTL",
+  "version": "1.3.3",
+  "author": "Mike Matera, Chris Johnson, Arduino",
+  "src": "github.com/mike-matera/ArduinoSTL-1.3.3.zip",
+  "sha256": "e2720c566b2b5275bd70f85c3259edef8402b841793f9537795a8cd2ae2676b9",
+  "headers": [
+   "ArduinoSTL.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "C++ 표준 라이브러리 (vector, string …)"
+ },
+ {
+  "id": "ArduinoThread",
+  "name": "ArduinoThread",
+  "version": "2.1.1",
+  "author": "Ivan Seidel",
+  "src": "github.com/ivanseidel/ArduinoThread-2.1.1.zip",
+  "sha256": "dc00acb27ac66baa17ffd6a5337eeda7d45838f569c6a203491dff3a706f614a",
+  "headers": [
+   "Thread.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "간단한 스레드 흉내"
+ },
+ {
+  "id": "ArduinoUniqueID",
+  "name": "ArduinoUniqueID",
+  "version": "1.3.0",
+  "author": "Luiz Henrique Cassettari",
+  "src": "github.com/ricaun/ArduinoUniqueID-1.3.0.zip",
+  "sha256": "1bd23d578ff8f1cd98f91378ee0e0c9901a71abad8b793748b7591870147c969",
+  "headers": [
+   "ArduinoUniqueID.h"
+  ],
+  "requires": [],
+  "sim": "pins",
+  "optional": true,
+  "desc": "보드 고유 번호"
+ },
+ {
+  "id": "AutoPID",
+  "name": "AutoPID",
+  "version": "1.0.3",
+  "author": "Ryan Downing",
+  "src": "github.com/r-downing/AutoPID-1.0.3.zip",
+  "sha256": "a04899fdae04951a58e0146849e536686a18339aa96bd770e8e786ae32b32c1e",
+  "headers": [
+   "AutoPID.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "PID 제어 (간단)"
+ },
+ {
+  "id": "Base64",
+  "name": "Base64",
+  "version": "1.0.2",
+  "author": "Xander Electronics",
+  "src": "github.com/agdl/Base64-1.0.2.zip",
+  "sha256": "6ce4dfad53fae9d582c6b7e2c0503cbec41417d7b91d18dc597ced672b54245c",
+  "headers": [
+   "Base64.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "Base64 변환"
+ },
+ {
+  "id": "BH1750",
+  "name": "BH1750",
+  "version": "1.3.0",
+  "author": "Christopher Laws",
+  "src": "github.com/claws/BH1750-1.3.0.zip",
+  "sha256": "740c39179835c056afd84eb3d90e23633d98e54252ad7de988c27d33f385bde2",
+  "headers": [
+   "BH1750.h"
+  ],
+  "requires": [],
+  "sim": "pins",
+  "optional": true,
+  "desc": "조도 센서 BH1750 (lux 단위)"
+ },
+ {
+  "id": "Blynk",
+  "name": "Blynk",
+  "version": "1.4.0",
+  "author": "Blynk",
+  "src": "github.com/Blynk-Technologies/Blynk-1.4.0.zip",
+  "sha256": "474d9080ec3ce706f9f956149e7b87fc26bec062c2a8328ed11ba278593792e7",
+  "headers": [
+   "BlynkSimpleStream.h"
+  ],
+  "requires": [
+   "BlynkNcpDriver"
+  ],
+  "sim": "pins",
+  "optional": true,
+  "desc": "Blynk IoT 앱 연결"
+ },
+ {
+  "id": "BlynkNcpDriver",
+  "name": "BlynkNcpDriver",
+  "version": "0.7.0",
+  "author": "Volodymyr Shymanskyy",
+  "src": "github.com/Blynk-Technologies/BlynkNcpDriver-0.7.0.zip",
+  "sha256": "65a85f4c20b24b39eea135e4c4c522c309cce5e31ff8a46182b4094951f39fea",
+  "headers": [
+   "BlynkRpcClient.h"
+  ],
+  "requires": [],
+  "sim": "pins",
+  "optional": true,
+  "desc": "(다른 라이브러리가 함께 쓰는 부분) A shared interface to the services provided by Blynk.NCP"
+ },
+ {
+  "id": "CAN",
+  "name": "CAN",
+  "version": "0.3.1",
+  "author": "Sandeep Mistry",
+  "src": "github.com/sandeepmistry/CAN-0.3.1.zip",
+  "sha256": "e5e21110ab25149bbf163d3c9a5626468e976100cd4643c4510e1495329606ea",
+  "headers": [
+   "CAN.h"
+  ],
+  "requires": [],
+  "sim": "pins",
+  "optional": true,
+  "desc": "CAN 통신 (MCP2515)"
+ },
+ {
+  "id": "CapacitiveSensor",
+  "name": "CapacitiveSensor",
+  "version": "0.5.1",
+  "author": "Paul Bagder, Paul Stoffregen",
+  "src": "github.com/PaulStoffregen/CapacitiveSensor-0.5.1.zip",
+  "sha256": "59a2f3b1d24d46b42a7f1e82412a3a362a6e2962dcc39c7518cc388be9e16295",
+  "headers": [
+   "CapacitiveSensor.h"
+  ],
+  "requires": [],
+  "sim": "pins",
+  "optional": true,
+  "desc": "정전식 터치 감지"
+ },
+ {
+  "id": "CheapStepper",
+  "name": "CheapStepper",
+  "version": "0.2.1",
+  "author": "Tyler Henry",
+  "src": "github.com/tyhenry/CheapStepper-0.2.1.zip",
+  "sha256": "2fa4ed4f4f8491df00f2524dea8a11fb1b6ee28ad11b4741f6f7bacc46e205ac",
+  "headers": [
+   "CheapStepper.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "28BYJ-48 스테퍼 모터 전용"
+ },
+ {
+  "id": "Chrono",
+  "name": "Chrono",
+  "version": "1.2.1",
+  "author": "Thomas O Fredericks and Sofian Audry",
+  "src": "github.com/thomasfredericks/Chrono-1.2.1.zip",
+  "sha256": "2075183a4438767730dfb4a91155a57f0c9365f51e1591623a4c6fdb6236c33d",
+  "headers": [
+   "Chrono.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "경과 시간 재기"
+ },
+ {
+  "id": "CircularBuffer",
+  "name": "CircularBuffer",
+  "version": "1.4.0",
+  "author": "AgileWare",
+  "src": "github.com/rlogiacco/CircularBuffer-1.4.0.zip",
+  "sha256": "3b30610ac51a35d8528d5ea9be16ccfadc4bf32c8e46631d534ced81730f54b4",
+  "headers": [
+   "CircularBuffer.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "원형 버퍼"
+ },
+ {
+  "id": "CmdMessenger",
+  "name": "CmdMessenger",
+  "version": "5.0.0",
+  "author": "Thijs Elenbaas, Valeriy Kucherenko",
+  "src": "github.com/thijse/CmdMessenger-5.0.0.zip",
+  "sha256": "8e17de0736b6d53c0fec2f955696f482bdbc7b4c5d9009d9f063bcbb598db862",
+  "headers": [
+   "CmdMessenger.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "시리얼 명령 주고받기"
+ },
+ {
+  "id": "CRC32",
+  "name": "CRC32",
+  "version": "2.0.1",
+  "author": "Christopher Baker",
+  "src": "github.com/bakercp/CRC32-2.0.1.zip",
+  "sha256": "8dbe5751b2a6cb786a4549461b835f1db141c209ffc8d900a8a1dda2eb07a0f1",
+  "headers": [
+   "CRC32.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "CRC32 체크섬"
+ },
+ {
+  "id": "Crypto",
+  "name": "Crypto",
+  "version": "0.4.0",
+  "author": "Rhys Weatherley rhys.weatherley@gmail.co",
+  "src": "github.com/OperatorFoundation/Crypto-0.4.0.zip",
+  "sha256": "87dad2075e8c92b8599a501d23d7b5d887d212ef177b9da127eb6d28958a5f26",
+  "headers": [
+   "Crypto.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "암호화 (AES · SHA …)"
+ },
+ {
+  "id": "DFPlayerMini_Fast",
+  "name": "DFPlayerMini_Fast",
+  "version": "1.2.4",
+  "author": "PowerBroker2",
+  "src": "github.com/PowerBroker2/DFPlayerMini_Fast-1.2.4.zip",
+  "sha256": "bb6dab2cfa356d7cbb1e268623f76d289783488c2ba9102c44d046bb7a0fc2df",
+  "headers": [
+   "DFPlayerMini_Fast.h"
+  ],
+  "requires": [
+   "FireTimer"
+  ],
+  "sim": "pins",
+  "optional": true,
+  "desc": "DFPlayer Mini (빠른 구현)"
+ },
+ {
+  "id": "DFRobotDFPlayerMini",
+  "name": "DFRobotDFPlayerMini",
+  "version": "1.0.6",
+  "author": "DFRobot",
+  "src": "github.com/DFRobot/DFRobotDFPlayerMini-1.0.6.zip",
+  "sha256": "38b297b0c9a5363feffd4c3502982fbaf2203d790fdf1f5f36852d82d3492567",
+  "headers": [
+   "DFRobotDFPlayerMini.h"
+  ],
+  "requires": [],
+  "sim": "pins",
+  "optional": true,
+  "desc": "MP3 모듈 DFPlayer Mini"
+ },
+ {
+  "id": "DHTStable",
+  "name": "DHTStable",
+  "version": "1.1.4",
+  "author": "Rob Tillaart",
+  "src": "github.com/RobTillaart/DHTStable-1.1.4.zip",
+  "sha256": "8b97735f84494d404a811e15b8c9cbed61ed34f04b643aa6b8b91ad5c6aaf208",
+  "headers": [
+   "DHTStable.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "온습도 센서 DHT (다른 구현)"
+ },
+ {
+  "id": "digitalWriteFast",
+  "name": "digitalWriteFast",
+  "version": "1.3.1",
+  "author": "Watterott https://learn.watterott.com/ar",
+  "src": "github.com/ArminJo/digitalWriteFast-1.3.1.zip",
+  "sha256": "9dce991d5b8a196e682f87e9a94d779c273dab8919f2395af449ceec6980c088",
+  "headers": [
+   "digitalWriteFast.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "빠른 digitalWrite"
+ },
+ {
+  "id": "DS1307RTC",
+  "name": "DS1307RTC",
+  "version": "1.4.1",
+  "author": "Michael Margolis",
+  "src": "github.com/PaulStoffregen/DS1307RTC-1.4.1.zip",
+  "sha256": "771a2a5a1a7dadea40a4f1b3ef9b2da55e3b7dbeb6d4e0057442e5167d295818",
+  "headers": [
+   "DS1307RTC.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "RTC DS1307 을 TimeLib 과 함께"
+ },
+ {
+  "id": "DS3231",
+  "name": "DS3231",
+  "version": "1.2.0",
+  "author": "Andrew Wickert, Eric Ayars, Jean-Claude ",
+  "src": "github.com/NorthernWidget/DS3231-1.2.0.zip",
+  "sha256": "23486d557091d1f9662daa78678a0cb5c28acebf8d666218062acd2aff410f65",
+  "headers": [
+   "DS3231.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "RTC DS3231"
+ },
+ {
+  "id": "EasyButton",
+  "name": "EasyButton",
+  "version": "2.0.3",
+  "author": "Evert Arias",
+  "src": "github.com/evert-arias/EasyButton-2.0.3.zip",
+  "sha256": "3c632fdcea4dc2e4d08427791f6b194d41ae1869bb164c1530c55b766407f8e2",
+  "headers": [
+   "EasyButton.h"
+  ],
+  "requires": [
+   "MegunoLink"
+  ],
+  "sim": "full",
+  "optional": true,
+  "desc": "버튼 눌림 감지"
+ },
+ {
+  "id": "EEPROMEx",
+  "name": "EEPROMEx",
+  "version": "1.0.0",
+  "author": "Thijs Elenbaas",
+  "src": "github.com/thijse/EEPROMEx-1.0.0.zip",
+  "sha256": "a33bd9df9a0401153a329978f1e8ff73570e2b0f2365ee6f26745862e6bc3ff2",
+  "headers": [
+   "EEPROMex.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "EEPROM 에 여러 자료형 저장"
+ },
+ {
+  "id": "elapsedMillis",
+  "name": "elapsedMillis",
+  "version": "1.0.6",
+  "author": "Paul Stoffregen",
+  "src": "github.com/pfeerick/elapsedMillis-1.0.6.zip",
+  "sha256": "275f17009f76a7d48ed4baa2f015b3ed02d144a581a3a88f35ece79ed2d6a081",
+  "headers": [
+   "elapsedMillis.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "지난 시간을 변수처럼 쓰기"
+ },
+ {
+  "id": "EmonLib",
+  "name": "EmonLib",
+  "version": "1.1.0",
+  "author": "OpenEnergyMonitor",
+  "src": "github.com/openenergymonitor/EmonLib-1.1.0.zip",
+  "sha256": "24069657940afc210f60fd2cd8a257906421ea0322788cb362c398057ac843b7",
+  "headers": [
+   "EmonLib.h"
+  ],
+  "requires": [],
+  "sim": "pins",
+  "optional": true,
+  "desc": "교류 전력 측정"
+ },
+ {
+  "id": "EnableInterrupt",
+  "name": "EnableInterrupt",
+  "version": "1.1.0",
+  "author": "Mike \"GreyGnome\" Schwager",
+  "src": "github.com/GreyGnome/EnableInterrupt-1.1.0.zip",
+  "sha256": "888c39edb3ae8464c25976f4ed530b5644fd16c03582e469e53bd47409f9a679",
+  "headers": [
+   "EnableInterrupt.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "핀 인터럽트를 쉽게"
+ },
+ {
+  "id": "Encoder",
+  "name": "Encoder",
+  "version": "1.4.4",
+  "author": "Paul Stoffregen",
+  "src": "github.com/PaulStoffregen/Encoder-1.4.4.zip",
+  "sha256": "f62f6d8c02580c120aa4d29beaa652b027e2d2a1f78b8f9d236243e489c85f7f",
+  "headers": [
+   "Encoder.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "로터리 엔코더 (인터럽트 방식)"
+ },
+ {
+  "id": "Ethernet",
+  "name": "Ethernet",
+  "version": "2.0.2",
+  "author": "Various (see AUTHORS file for details)",
+  "src": "github.com/arduino-libraries/Ethernet-2.0.2.zip",
+  "sha256": "e8688e417039c79d547d005f4deecbdaffde965823cfa79f64a18d67df1112d6",
+  "headers": [
+   "Ethernet.h"
+  ],
+  "requires": [],
+  "sim": "pins",
+  "optional": true,
+  "desc": "이더넷 쉴드 (W5100 / W5500)"
+ },
+ {
+  "id": "ezButton",
+  "name": "ezButton",
+  "version": "1.0.6",
+  "author": "ArduinoGetStarted.com",
+  "src": "github.com/ArduinoGetStarted/ezButton-1.0.6.zip",
+  "sha256": "9e45e8e46171235b6e30c04b674e523841be19da9012f91166daaccd08e10700",
+  "headers": [
+   "ezButton.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "버튼 떨림 제거와 횟수 세기"
+ },
+ {
+  "id": "FastLED",
+  "name": "FastLED",
+  "version": "3.9.16",
+  "author": "Daniel Garcia",
+  "src": "github.com/FastLED/FastLED-3.9.16.zip",
+  "sha256": "2ff81865c91265a380a836e0058cc183604d5677fce15f3b8d402f20a259fd9f",
+  "headers": [
+   "FastLED.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "RGB LED 띠 (WS2812 등) 고속 제어"
+ },
+ {
+  "id": "FireTimer",
+  "name": "FireTimer",
+  "version": "1.0.5",
+  "author": "PowerBroker2",
+  "src": "github.com/PowerBroker2/FireTimer-1.0.5.zip",
+  "sha256": "88233ae0ecf1e684e8edb91a9ead17f5db829d334b8d427c957b22a24a41c665",
+  "headers": [
+   "FireTimer.h"
+  ],
+  "requires": [],
+  "sim": "pins",
+  "optional": true,
+  "desc": "(다른 라이브러리가 함께 쓰는 부분) Simple and non-blocking library to time the execution of processes"
+ },
+ {
+  "id": "Firmata",
+  "name": "Firmata",
+  "version": "2.5.9",
+  "author": "Firmata Developers",
+  "src": "github.com/firmata/Firmata-2.5.9.zip",
+  "sha256": "281060ac597fd329fa700b60f6871385b1d8756802f0c83e3ba2516c3fef886b",
+  "headers": [
+   "Firmata.h"
+  ],
+  "requires": [],
+  "sim": "pins",
+  "optional": true,
+  "desc": "컴퓨터에서 보드를 조종하는 표준 통신"
+ },
+ {
+  "id": "FreeRTOS",
+  "name": "FreeRTOS",
+  "version": "10.0.0-1",
+  "author": "Richard Berry",
+  "src": "github.com/feilipu/FreeRTOS-10.0.0-1.zip",
+  "sha256": "df3e6a967036235a56acd7bf74fdc621312600e0fb9f7ce4823b696f3778e92d",
+  "headers": [
+   "Arduino_FreeRTOS.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "실시간 운영체제 FreeRTOS"
+ },
+ {
+  "id": "HCSR04",
+  "name": "HCSR04",
+  "version": "2.0.0",
+  "author": "Martin Sosic",
+  "src": "github.com/Martinsos/HCSR04-2.0.0.zip",
+  "sha256": "0461d1fc2f89939162cd366a5e4748739553387b8d16e29662ff324ac5704d5d",
+  "headers": [
+   "HCSR04.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "초음파 거리 센서 HC-SR04"
+ },
+ {
+  "id": "hd44780",
+  "name": "hd44780",
+  "version": "1.3.2",
+  "author": "Bill Perry",
+  "src": "github.com/duinoWitchery/hd44780-1.3.2.zip",
+  "sha256": "c1408b8129a225fa4e2f3e2e3bef709c1f98ca53dadedfcc9b071f083e504f89",
+  "headers": [
+   "hd44780.h"
+  ],
+  "requires": [],
+  "sim": "pins",
+  "optional": true,
+  "desc": "글자 LCD 를 자동으로 찾아 쓰는 라이브러리"
+ },
+ {
+  "id": "HX711_ADC",
+  "name": "HX711_ADC",
+  "version": "1.2.12",
+  "author": "Olav Kallhovd",
+  "src": "github.com/olkal/HX711_ADC-1.2.12.zip",
+  "sha256": "b2a0ce81e68d8338a7b409d5a1adddc83b0fd731c8b3d32b046a77368b4eadba",
+  "headers": [
+   "HX711_ADC.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "로드셀 HX711 (다른 구현)"
+ },
+ {
+  "id": "IRremote",
+  "name": "IRremote",
+  "version": "4.7.1",
+  "author": "shirriff, z3t0, ArminJo",
+  "src": "github.com/z3t0/IRremote-4.7.1.zip",
+  "sha256": "33d7630e883cc60088b8d81f4fd1129b72bf14894edd56ec3ddbed998b3d4ce1",
+  "headers": [
+   "IRremote.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "적외선 리모컨 송수신"
+ },
+ {
+  "id": "JC_Button",
+  "name": "JC_Button",
+  "version": "2.1.6",
+  "author": "Jack Christensen",
+  "src": "github.com/JChristensen/JC_Button-2.1.6.zip",
+  "sha256": "089d66413e26d621f9a1918403ef73b0c9af4ad39431b3b06af6c8c587920389",
+  "headers": [
+   "JC_Button.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "버튼 눌림 · 길게 누르기"
+ },
+ {
+  "id": "Kalman_Filter_Library",
+  "name": "Kalman Filter Library",
+  "version": "1.0.2",
+  "author": "Kristian Lauszus (TKJ Electronics)",
+  "src": "github.com/TKJElectronics/Kalman_Filter_Library-1.0.2.zip",
+  "sha256": "d60030e72f13533965ec461eef55068e94462ace859c96279532749497590291",
+  "headers": [
+   "Kalman.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "칼만 필터"
+ },
+ {
+  "id": "L298N",
+  "name": "L298N",
+  "version": "2.0.3",
+  "author": "Andrea Lombardo",
+  "src": "github.com/AndreaLombardo/L298N-2.0.3.zip",
+  "sha256": "f4546ce5314c6545cf425ba5820bfa2fa63e1751b1a8c29ef4ef38e1598e885a",
+  "headers": [
+   "L298N.h"
+  ],
+  "requires": [],
+  "sim": "pins",
+  "optional": true,
+  "desc": "L298N DC 모터 드라이버"
+ },
+ {
+  "id": "LedControl",
+  "name": "LedControl",
+  "version": "1.0.6",
+  "author": "Eberhard Fahle",
+  "src": "github.com/wayoda/LedControl-1.0.6.zip",
+  "sha256": "977d48f508021a26d520a92766c03f63d2abe95e41e9e607d241e57015247afa",
+  "headers": [
+   "LedControl.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "MAX7219 LED 매트릭스 · 7세그먼트"
+ },
+ {
+  "id": "LinkedList",
+  "name": "LinkedList",
+  "version": "1.3.3",
+  "author": "Ivan Seidel",
+  "src": "github.com/ivanseidel/LinkedList-1.3.3.zip",
+  "sha256": "1787f0e53e74a8251ea58be468e7039e1bc551d81141d16dd4e4911d33919907",
+  "headers": [
+   "LinkedList.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "연결 리스트"
+ },
+ {
+  "id": "LiquidCrystal_PCF8574",
+  "name": "LiquidCrystal_PCF8574",
+  "version": "2.3.0",
+  "author": "Matthias Hertel",
+  "src": "github.com/mathertel/LiquidCrystal_PCF8574-2.3.0.zip",
+  "sha256": "89a5fc8dc11e5a899e6cb47c6c997d06ca24a0c12d4f133cdc036b6fc56960cf",
+  "headers": [
+   "LiquidCrystal_PCF8574.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "I2C 글자 LCD (PCF8574, 다른 구현)"
+ },
+ {
+  "id": "LiquidMenu",
+  "name": "LiquidMenu",
+  "version": "1.6.3",
+  "author": "Vasil Kalchev",
+  "src": "github.com/VasilKalchev/LiquidMenu-1.6.3.zip",
+  "sha256": "8d5788c2862640b3db5a36e64a2ad573d70951d3a7a977c93865712275eb1cee",
+  "headers": [
+   "LiquidMenu.h"
+  ],
+  "requires": [
+   "LiquidCrystal"
+  ],
+  "sim": "pins",
+  "optional": true,
+  "desc": "LCD 메뉴 만들기"
+ },
+ {
+  "id": "LoRa",
+  "name": "LoRa",
+  "version": "0.8.0",
+  "author": "Sandeep Mistry",
+  "src": "github.com/sandeepmistry/LoRa-0.8.0.zip",
+  "sha256": "a173d1125619ea98e766faaa9b990098a07bd5104bc12247f9684d20f5005bc0",
+  "headers": [
+   "LoRa.h"
+  ],
+  "requires": [],
+  "sim": "pins",
+  "optional": true,
+  "desc": "LoRa 무선 (SX127x)"
+ },
+ {
+  "id": "Low_Power",
+  "name": "Low-Power",
+  "version": "1.81.0",
+  "author": "Rocket Scream Electronics",
+  "src": "github.com/rocketscream/Low_Power-1.81.0.zip",
+  "sha256": "6269154393347525328657a54122d731a920cd7b12072584914e26bc38af6c34",
+  "headers": [
+   "LowPower.h"
+  ],
+  "requires": [],
+  "sim": "pins",
+  "optional": true,
+  "desc": "절전 모드"
+ },
+ {
+  "id": "Madgwick",
+  "name": "Madgwick",
+  "version": "1.2.0",
+  "author": "Arduino",
+  "src": "github.com/arduino-libraries/Madgwick-1.2.0.zip",
+  "sha256": "9eb84fb336aeec7b38483322cfdca6bf3f9ac8a85c353d743319a2fa148d11d0",
+  "headers": [
+   "MadgwickAHRS.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "자세 계산 (Madgwick)"
+ },
+ {
+  "id": "MAX6675_library",
+  "name": "MAX6675 library",
+  "version": "1.1.2",
+  "author": "Adafruit",
+  "src": "github.com/adafruit/MAX6675_library-1.1.2.zip",
+  "sha256": "6e2a2edc8cebb18d2b99398a2f241573575002ab93d2dffd29fce745625f7671",
+  "headers": [
+   "max6675.h"
+  ],
+  "requires": [
+   "LiquidCrystal"
+  ],
+  "sim": "pins",
+  "optional": true,
+  "desc": "열전대 온도 MAX6675"
+ },
+ {
+  "id": "mcp_can",
+  "name": "mcp_can",
+  "version": "1.5.1",
+  "author": "coryjfowler",
+  "src": "github.com/coryjfowler/mcp_can-1.5.1.zip",
+  "sha256": "2152afef5fbddf53d4123d2620f83bf8a86e8380f525b84c9e51136b9a47fb8e",
+  "headers": [
+   "mcp_can.h"
+  ],
+  "requires": [],
+  "sim": "pins",
+  "optional": true,
+  "desc": "MCP2515 CAN 통신"
+ },
+ {
+  "id": "MCUFRIEND_kbv",
+  "name": "MCUFRIEND_kbv",
+  "version": "2.9.8",
+  "author": "David Prentice",
+  "src": "github.com/prenticedavid/MCUFRIEND_kbv-2.9.8.zip",
+  "sha256": "a36fa13e0cf1a956b752d26f3bb4efcd44019a5f407498f64a600a6774e6660f",
+  "headers": [
+   "MCUFRIEND_kbv.h"
+  ],
+  "requires": [],
+  "sim": "pins",
+  "optional": true,
+  "desc": "우노용 TFT 쉴드"
+ },
+ {
+  "id": "MD_MAX72XX",
+  "name": "MD_MAX72XX",
+  "version": "3.5.1",
+  "author": "majicDesigns",
+  "src": "github.com/MajicDesigns/MD_MAX72XX-3.5.1.zip",
+  "sha256": "ecb944f3d9dc5dc94eb961b373ab3a9483e30e8300356002301150bcb7b87275",
+  "headers": [
+   "MD_MAX72xx.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "MAX7219 LED 매트릭스 제어"
+ },
+ {
+  "id": "MD_Parola",
+  "name": "MD_Parola",
+  "version": "3.7.7",
+  "author": "majicDesigns",
+  "src": "github.com/MajicDesigns/MD_Parola-3.7.7.zip",
+  "sha256": "e524b228437ab31b206338c1091e424a390a81c18cc03c4474e5f6ff504a5c65",
+  "headers": [
+   "MD_Parola.h"
+  ],
+  "requires": [
+   "MD_MAX72XX"
+  ],
+  "sim": "full",
+  "optional": true,
+  "desc": "MAX7219 매트릭스에 흐르는 글자"
+ },
+ {
+  "id": "MegunoLink",
+  "name": "MegunoLink",
+  "version": "1.43.0",
+  "author": "Number Eight Innovation",
+  "src": "github.com/Megunolink/MegunoLink-1.43.0.zip",
+  "sha256": "c33bb523923943425b31760b180708f35550266f188d5bc24e77cff01443d824",
+  "headers": [
+   "MegunoLink.h",
+   "CommandHandler.h"
+  ],
+  "requires": [],
+  "sim": "pins",
+  "optional": true,
+  "desc": "(다른 라이브러리가 함께 쓰는 부분) Library for storing data in the eeprom, processing serial messages and plotting data with "
+ },
+ {
+  "id": "MFRC522",
+  "name": "MFRC522",
+  "version": "1.4.12",
+  "author": "GithubCommunity",
+  "src": "github.com/miguelbalboa/MFRC522-1.4.12.zip",
+  "sha256": "1de4474b264de1b33ad015aff251a96ebc660b9997c9366199dfbad7bb7c39c1",
+  "headers": [
+   "MFRC522.h"
+  ],
+  "requires": [],
+  "sim": "pins",
+  "optional": true,
+  "desc": "RFID 카드 리더 RC522"
+ },
+ {
+  "id": "MIDI_Library",
+  "name": "MIDI Library",
+  "version": "5.0.2",
+  "author": "Francois Best, lathoub",
+  "src": "github.com/FortySevenEffects/MIDI_Library-5.0.2.zip",
+  "sha256": "5ad8ee1ccdc27d72ce5b5591844c8ea863bc5107255a87f30b9c05e4b3be5c44",
+  "headers": [
+   "MIDI.h"
+  ],
+  "requires": [],
+  "sim": "pins",
+  "optional": true,
+  "desc": "MIDI 송수신"
+ },
+ {
+  "id": "ModbusMaster",
+  "name": "ModbusMaster",
+  "version": "2.0.1",
+  "author": "Doc Walker",
+  "src": "github.com/4-20ma/ModbusMaster-2.0.1.zip",
+  "sha256": "32685055fd5576a6cef69de396ae13ae4ef3de49884e6241e08c42e5e048c7ff",
+  "headers": [
+   "ModbusMaster.h"
+  ],
+  "requires": [],
+  "sim": "pins",
+  "optional": true,
+  "desc": "Modbus RTU 마스터 (RS485)"
+ },
+ {
+  "id": "movingAvg",
+  "name": "movingAvg",
+  "version": "2.3.2",
+  "author": "Jack Christensen",
+  "src": "github.com/JChristensen/movingAvg-2.3.2.zip",
+  "sha256": "7002dbec4b7e205cc61d1d79d695f24a4828de65885409d4905c3cd73da86f90",
+  "headers": [
+   "movingAvg.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "이동 평균 (간단)"
+ },
+ {
+  "id": "MPU6050_light",
+  "name": "MPU6050_light",
+  "version": "1.2.1",
+  "author": "rfetick",
+  "src": "github.com/rfetick/MPU6050_light-1.2.1.zip",
+  "sha256": "04b81b3b89ca627a83db9ad3b9a77fb11530c04cadbf6bea5d0940b815c098cd",
+  "headers": [
+   "MPU6050_light.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "MPU6050 가벼운 구현"
+ },
+ {
+  "id": "MPU6050_tockn",
+  "name": "MPU6050_tockn",
+  "version": "1.5.2",
+  "author": "tockn",
+  "src": "github.com/Tockn/MPU6050_tockn-1.5.2.zip",
+  "sha256": "59036bb0447c1dfe0dad3f05fdc0beb9e0a885263d83eb709093d0be02dfe646",
+  "headers": [
+   "MPU6050_tockn.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "MPU6050 으로 각도 구하기"
+ },
+ {
+  "id": "MsTimer2",
+  "name": "MsTimer2",
+  "version": "1.1.0",
+  "author": "Javier Valencia",
+  "src": "github.com/PaulStoffregen/MsTimer2-1.1.0.zip",
+  "sha256": "bf7c6d2d5f3ff96dd21f0cd0e8fa072ab5df881ce3d6fc9db3ba7fb98c56949e",
+  "headers": [
+   "MsTimer2.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "타이머2 인터럽트"
+ },
+ {
+  "id": "NeoGPS",
+  "name": "NeoGPS",
+  "version": "4.2.9",
+  "author": "SlashDevin",
+  "src": "github.com/SlashDevin/NeoGPS-4.2.9.zip",
+  "sha256": "5cfd3a9737fd8b67959d59c76901155967472e38df8bd806481b8b4f51e40169",
+  "headers": [
+   "NMEAGPS.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "GPS 를 빠르고 가볍게 읽기"
+ },
+ {
+  "id": "NeoPixelBus_by_Makuna",
+  "name": "NeoPixelBus by Makuna",
+  "version": "2.8.4",
+  "author": "Michael C. Miller (makuna@live.com)",
+  "src": "github.com/Makuna/NeoPixelBus_by_Makuna-2.8.4.zip",
+  "sha256": "35d341c0e49cbf0fabb23feeeaca390ede647b2e1ac7887cf19fcaf994dda005",
+  "headers": [
+   "NeoPixelBus.h"
+  ],
+  "requires": [],
+  "sim": "pins",
+  "optional": true,
+  "desc": "NeoPixel 제어 (다른 구현)"
+ },
+ {
+  "id": "NeoSWSerial",
+  "name": "NeoSWSerial",
+  "version": "3.0.5",
+  "author": "SlashDevin",
+  "src": "github.com/SlashDevin/NeoSWSerial-3.0.5.zip",
+  "sha256": "7e5e04c8b54742f3dc96395bee9a2b4d287f0b35bc00c829a23decec828e99e1",
+  "headers": [
+   "NeoSWSerial.h"
+  ],
+  "requires": [],
+  "sim": "pins",
+  "optional": true,
+  "desc": "가벼운 소프트웨어 시리얼"
+ },
+ {
+  "id": "NTPClient",
+  "name": "NTPClient",
+  "version": "3.2.1",
+  "author": "Fabrice Weinberg",
+  "src": "github.com/arduino-libraries/NTPClient-3.2.1.zip",
+  "sha256": "67fcd4799afb6bb490c448f4f00e92fcfa59ea7227a161242822be2f9a8ebab2",
+  "headers": [
+   "NTPClient.h"
+  ],
+  "requires": [],
+  "sim": "pins",
+  "optional": true,
+  "desc": "인터넷 시간(NTP) 받아 오기"
+ },
+ {
+  "id": "OneButton",
+  "name": "OneButton",
+  "version": "2.6.2",
+  "author": "Matthias Hertel",
+  "src": "github.com/mathertel/OneButton-2.6.2.zip",
+  "sha256": "262799fc8c3a848b2c70898d35140d81792b0c3c5fd518b21c5de78ab14e5960",
+  "headers": [
+   "OneButton.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "버튼 하나로 한 번 · 두 번 · 길게 누르기 구분"
+ },
+ {
+  "id": "PID",
+  "name": "PID",
+  "version": "1.2.0",
+  "author": "Brett Beauregard",
+  "src": "github.com/br3ttb/PID-1.2.0.zip",
+  "sha256": "98a0570756599e9bd63c39a62d1ddc7535f650c448a6d9a5029c63c903a6f2ad",
+  "headers": [
+   "PID_v1.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "PID 제어 (PID_v1.h)"
+ },
+ {
+  "id": "PinChangeInterrupt",
+  "name": "PinChangeInterrupt",
+  "version": "1.2.9",
+  "author": "NicoHood",
+  "src": "github.com/NicoHood/PinChangeInterrupt-1.2.9.zip",
+  "sha256": "23d349530c55f1b70e0ca8d4ef35c9b2e9425d425b1fd28906c961f1318e4f64",
+  "headers": [
+   "PinChangeInterrupt.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "아무 핀에서나 인터럽트"
+ },
+ {
+  "id": "PubSubClient",
+  "name": "PubSubClient",
+  "version": "2.8.0",
+  "author": "Nick O'Leary",
+  "src": "github.com/knolleary/PubSubClient-2.8.0.zip",
+  "sha256": "f0849b93a2b02e263a6c157c374d6103caefba753a47dcbef64bbec620b079fe",
+  "headers": [
+   "PubSubClient.h"
+  ],
+  "requires": [],
+  "sim": "pins",
+  "optional": true,
+  "desc": "MQTT 통신"
+ },
+ {
+  "id": "QList",
+  "name": "QList",
+  "version": "0.6.7",
+  "author": "Martin Dagarin",
+  "src": "github.com/SloCompTech/QList-0.6.7.zip",
+  "sha256": "7f64e1fc97797737e0b48d3745f3612d6b9c102a93d40c2ac372b11ca78e6c0e",
+  "headers": [
+   "QList.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "연결 리스트"
+ },
+ {
+  "id": "QMC5883LCompass",
+  "name": "QMC5883LCompass",
+  "version": "1.2.3",
+  "author": "MPrograms",
+  "src": "github.com/mprograms/QMC5883LCompass-1.2.3.zip",
+  "sha256": "e52013ddee7e52199b2dcd9fffc03a65528774cc5fd19f28e9a56e64c0163a3d",
+  "headers": [
+   "QMC5883LCompass.h"
+  ],
+  "requires": [],
+  "sim": "pins",
+  "optional": true,
+  "desc": "나침반 센서 QMC5883L"
+ },
+ {
+  "id": "QuickPID",
+  "name": "QuickPID",
+  "version": "3.1.9",
+  "author": "David Lloyd",
+  "src": "github.com/Dlloydev/QuickPID-3.1.9.zip",
+  "sha256": "6f1c50fd5ac33c16d266b395340cc885a6baf7414b629b00052816ff0ef5f0fc",
+  "headers": [
+   "QuickPID.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "PID 제어 (빠른 구현)"
+ },
+ {
+  "id": "RadioHead",
+  "name": "RadioHead",
+  "version": "1.143.1",
+  "author": "Mike McCauley",
+  "src": "github.com/epsilonrt/RadioHead-1.143.1.zip",
+  "sha256": "861e561c93cef96119cfe47b05b4618f8d1409d4584c3b5a1b0e7fcd20f09ac4",
+  "headers": [
+   "RadioHead.h"
+  ],
+  "requires": [],
+  "sim": "pins",
+  "optional": true,
+  "desc": "여러 무선 모듈용 패킷 통신"
+ },
+ {
+  "id": "rc_switch",
+  "name": "rc-switch",
+  "version": "2.6.4",
+  "author": "sui77",
+  "src": "github.com/sui77/rc_switch-2.6.4.zip",
+  "sha256": "ed53920db3a38debe53e43b3bf8849ec3583aa419ef1f421a45662bcf056e014",
+  "headers": [
+   "RCSwitch.h"
+  ],
+  "requires": [],
+  "sim": "pins",
+  "optional": true,
+  "desc": "433MHz 무선 스위치"
+ },
+ {
+  "id": "Regexp",
+  "name": "Regexp",
+  "version": "0.1.0",
+  "author": "Nick Gammon",
+  "src": "github.com/nickgammon/Regexp-0.1.0.zip",
+  "sha256": "ffdaa272cc21b0b6405f532737493a9ac06f015b5a4d61c82488799e4d95a831",
+  "headers": [
+   "Regexp.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "정규 표현식"
+ },
+ {
+  "id": "ResponsiveAnalogRead",
+  "name": "ResponsiveAnalogRead",
+  "version": "1.2.1",
+  "author": "Damien Clarke",
+  "src": "github.com/dxinteractive/ResponsiveAnalogRead-1.2.1.zip",
+  "sha256": "1c72456af78ed72eb3b8d907062d6c8c79f4b97559506e78f499d203f1a73be2",
+  "headers": [
+   "ResponsiveAnalogRead.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "흔들리는 아날로그 값을 매끄럽게"
+ },
+ {
+  "id": "RF24",
+  "name": "RF24",
+  "version": "1.6.2",
+  "author": "TMRh20",
+  "src": "github.com/TMRh20/RF24-1.6.2.zip",
+  "sha256": "22270a8f60e0dd90ad0a4fb3f0923e9054cba5e71c4da8afd65041fe00e2cf3e",
+  "headers": [
+   "RF24.h"
+  ],
+  "requires": [],
+  "sim": "pins",
+  "optional": true,
+  "desc": "2.4GHz 무선 모듈 nRF24L01"
+ },
+ {
+  "id": "RF24Network",
+  "name": "RF24Network",
+  "version": "2.3.0",
+  "author": "TMRh20",
+  "src": "github.com/TMRh20/RF24Network-2.3.0.zip",
+  "sha256": "2705a12028de2f53803531c064549e766fc467f6bc57abce6f49ae71c20d8c2a",
+  "headers": [
+   "RF24Network.h"
+  ],
+  "requires": [
+   "RF24"
+  ],
+  "sim": "pins",
+  "optional": true,
+  "desc": "nRF24L01 네트워크"
+ },
+ {
+  "id": "RotaryEncoder",
+  "name": "RotaryEncoder",
+  "version": "1.6.0",
+  "author": "Matthias Hertel",
+  "src": "github.com/mathertel/RotaryEncoder-1.6.0.zip",
+  "sha256": "4418ab496299daaa0137120e6f2fa7a1abaa1c1d4d1203826855275bc49b7404",
+  "headers": [
+   "RotaryEncoder.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "돌리는 손잡이(로터리 엔코더)"
+ },
+ {
+  "id": "Rtc_by_Makuna",
+  "name": "Rtc by Makuna",
+  "version": "2.5.0",
+  "author": "Michael C. Miller (makuna@live.com)",
+  "src": "github.com/Makuna/Rtc_by_Makuna-2.5.0.zip",
+  "sha256": "06cd627fe9c3ecd5e16625aebe64a4b2fce76429105afffd62bf9c914c4a62bc",
+  "headers": [
+   "RtcDS1302.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "RTC DS1302 / DS1307 / DS3231"
+ },
+ {
+  "id": "RunningAverage",
+  "name": "RunningAverage",
+  "version": "0.4.9",
+  "author": "Rob Tillaart",
+  "src": "github.com/RobTillaart/RunningAverage-0.4.9.zip",
+  "sha256": "cb5c8f1c2edb7b6c50eacbe6af5ae764d9df9da171f588754067add04b79af1d",
+  "headers": [
+   "RunningAverage.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "이동 평균"
+ },
+ {
+  "id": "RunningMedian",
+  "name": "RunningMedian",
+  "version": "0.3.11",
+  "author": "Rob Tillaart",
+  "src": "github.com/RobTillaart/RunningMedian-0.3.11.zip",
+  "sha256": "d6ec09cf54b321e441cc8ecbc67bf1c21ca179a3c1303e082f30126c46b0a395",
+  "headers": [
+   "RunningMedian.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "이동 중앙값"
+ },
+ {
+  "id": "SD",
+  "name": "SD",
+  "version": "1.3.0",
+  "author": "Arduino, SparkFun",
+  "src": "github.com/arduino-libraries/SD-1.3.0.zip",
+  "sha256": "94b030f2ef4b55658e8505dc3043946878e6dc7644cbdcbf2b51bdea8bebff32",
+  "headers": [
+   "SD.h"
+  ],
+  "requires": [],
+  "sim": "pins",
+  "optional": true,
+  "desc": "SD 카드 읽고 쓰기"
+ },
+ {
+  "id": "SdFat",
+  "name": "SdFat",
+  "version": "2.3.0",
+  "author": "Bill Greiman",
+  "src": "github.com/greiman/SdFat-2.3.0.zip",
+  "sha256": "44337637960a3fe3d02377fae13d2f5a288197515361ac7f31c9f3d1f3bd579d",
+  "headers": [
+   "SdFat.h"
+  ],
+  "requires": [],
+  "sim": "pins",
+  "optional": true,
+  "desc": "SD 카드 (빠른 구현)"
+ },
+ {
+  "id": "SerialCommand",
+  "name": "SerialCommand",
+  "version": "2.0.1",
+  "author": "Hugo Arganda, Daniel Castellon",
+  "src": "github.com/argandas/SerialCommand-2.0.1.zip",
+  "sha256": "2eea6da652ea44a149f15ada255937997db6c426508d9f7bb8897cb66dd66e5a",
+  "headers": [
+   "SerialCommand.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "시리얼로 명령 받기"
+ },
+ {
+  "id": "ServoEasing",
+  "name": "ServoEasing",
+  "version": "3.6.0",
+  "author": "Armin Joachimsmeyer",
+  "src": "github.com/ArminJo/ServoEasing-3.6.0.zip",
+  "sha256": "2a3a6c0196ed7da5db3dce62356294571f0dd4bd38c91e85a73c62a853f1eb47",
+  "headers": [
+   "ServoEasing.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "서보를 부드럽게 움직이기"
+ },
+ {
+  "id": "SevSeg",
+  "name": "SevSeg",
+  "version": "3.7.0",
+  "author": "Dean Reading",
+  "src": "github.com/untr0py/SevSeg-3.7.0.zip",
+  "sha256": "1c2b115485e72533d3626ba98af0b4a7989b1ce6a7ee9a7a7bd01ae75446f526",
+  "headers": [
+   "SevSeg.h"
+  ],
+  "requires": [],
+  "sim": "pins",
+  "optional": true,
+  "desc": "7세그먼트 표시기를 핀으로 직접 구동"
+ },
+ {
+  "id": "ShiftRegister74HC595",
+  "name": "ShiftRegister74HC595",
+  "version": "1.3.1",
+  "author": "Timo Denk (timodenk.com)",
+  "src": "github.com/Simsso/ShiftRegister74HC595-1.3.1.zip",
+  "sha256": "9883de6ad0d69ff1f1af62f8e71f47ba2de1fbb280251735f7e0fdd3d683ccd8",
+  "headers": [
+   "ShiftRegister74HC595.h"
+  ],
+  "requires": [],
+  "sim": "pins",
+  "optional": true,
+  "desc": "74HC595 시프트 레지스터로 출력 늘리기"
+ },
+ {
+  "id": "SimpleDHT",
+  "name": "SimpleDHT",
+  "version": "1.0.15",
+  "author": "Winlin",
+  "src": "github.com/winlinvip/SimpleDHT-1.0.15.zip",
+  "sha256": "6745c97943dc6f01cc9b782e05b28fc9b9722706f92ee0437aea4e647730b9b3",
+  "headers": [
+   "SimpleDHT.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "온습도 센서 DHT 간단 구현"
+ },
+ {
+  "id": "SimpleKalmanFilter",
+  "name": "SimpleKalmanFilter",
+  "version": "0.2.0",
+  "author": "Denys Sene",
+  "src": "github.com/denyssene/SimpleKalmanFilter-0.2.0.zip",
+  "sha256": "e5814c6aadbf49f5aaab166f217bc06160777da98865d7bb693e3fb7b415be85",
+  "headers": [
+   "SimpleKalmanFilter.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "간단한 칼만 필터"
+ },
+ {
+  "id": "SimpleTimer",
+  "name": "SimpleTimer",
+  "version": "1.0.0",
+  "author": "Alexander Kiryanenko",
+  "src": "github.com/kiryanenko/SimpleTimer-1.0.0.zip",
+  "sha256": "38ad1f4d671f5a85e201bfcfd98fee04a9b5140f766f03c2e61c2a99b1b5f5ec",
+  "headers": [
+   "SimpleTimer.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "정해진 간격마다 함수 실행"
+ },
+ {
+  "id": "Smoothed",
+  "name": "Smoothed",
+  "version": "1.3.0",
+  "author": "Matthew Fryer",
+  "src": "github.com/MattFryer/Smoothed-1.3.0.zip",
+  "sha256": "736332db17d92028bf2e3707fa2bbdd831cd9c4c8bdc82e7ce595935126285f5",
+  "headers": [
+   "Smoothed.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "센서 값 매끄럽게"
+ },
+ {
+  "id": "SoftPWM",
+  "name": "SoftPWM",
+  "version": "1.0.1",
+  "author": "Brett Hagman",
+  "src": "github.com/bhagman/SoftPWM-1.0.1.zip",
+  "sha256": "3488adae6bdb753f385bcd6fdaa69ee4bbb06af2b752a1a03f6f6b9f22770c14",
+  "headers": [
+   "SoftPWM.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "아무 핀에서나 쓰는 소프트웨어 PWM"
+ },
+ {
+  "id": "SparkFun_APDS9960_RGB_and_Gesture_Sensor",
+  "name": "SparkFun APDS9960 RGB and Gesture Sensor",
+  "version": "1.4.2",
+  "author": "SparkFun Electronics",
+  "src": "github.com/sparkfun/SparkFun_APDS9960_RGB_and_Gesture_Sensor-1.4.2.zip",
+  "sha256": "8e76f73fe44fa414e060dda4c92619fadc7da005bfb7a9ee79f6b1ea973ce402",
+  "headers": [
+   "SparkFun_APDS9960.h"
+  ],
+  "requires": [],
+  "sim": "pins",
+  "optional": true,
+  "desc": "제스처 · 색 센서 APDS9960"
+ },
+ {
+  "id": "SparkFun_BME280",
+  "name": "SparkFun BME280",
+  "version": "2.0.11",
+  "author": "SparkFun Electronics",
+  "src": "github.com/sparkfun/SparkFun_BME280-2.0.11.zip",
+  "sha256": "c46ab286756c5f0b371112e82326a877343aac51ab93a2c2b246006bb2f113b1",
+  "headers": [
+   "SparkFunBME280.h"
+  ],
+  "requires": [],
+  "sim": "pins",
+  "optional": true,
+  "desc": "BME280 (SparkFun 구현)"
+ },
+ {
+  "id": "SparkFun_MAX3010x_Pulse_and_Proximity_Sensor_Library",
+  "name": "SparkFun MAX3010x Pulse and Proximity Sensor Library",
+  "version": "1.1.2",
+  "author": "SparkFun Electronics",
+  "src": "github.com/sparkfun/SparkFun_MAX3010x_Pulse_and_Proximity_Sensor_Library-1.1.2.zip",
+  "sha256": "abf7c924a779bd0b9d8107abf1ef599bf0c223af1d2783753098dc5bfa3476af",
+  "headers": [
+   "MAX30105.h"
+  ],
+  "requires": [],
+  "sim": "pins",
+  "optional": true,
+  "desc": "심박 · 산소포화도 센서 MAX30102"
+ },
+ {
+  "id": "SSD1306Ascii",
+  "name": "SSD1306Ascii",
+  "version": "1.3.5",
+  "author": "Bill Greiman",
+  "src": "github.com/greiman/SSD1306Ascii-1.3.5.zip",
+  "sha256": "774f53bc0348c88742e3fb75d2b17e869b833d5b8679011a3fad9b3ac32c77a4",
+  "headers": [
+   "SSD1306Ascii.h"
+  ],
+  "requires": [],
+  "sim": "pins",
+  "optional": true,
+  "desc": "메모리를 적게 쓰는 OLED 글자 출력"
+ },
+ {
+  "id": "StepperDriver",
+  "name": "StepperDriver",
+  "version": "1.6.0",
+  "author": "Laurentiu Badea",
+  "src": "github.com/laurb9/StepperDriver-1.6.0.zip",
+  "sha256": "506a50bd167a21ce95c08948df60bd9b7144e56214d3cca3e549c89fb167cde2",
+  "headers": [
+   "A4988.h"
+  ],
+  "requires": [],
+  "sim": "pins",
+  "optional": true,
+  "desc": "A4988 / DRV8825 스테퍼 드라이버"
+ },
+ {
+  "id": "Streaming",
+  "name": "Streaming",
+  "version": "6.3.0",
+  "author": "Mikal Hart",
+  "src": "github.com/janelia-arduino/Streaming-6.3.0.zip",
+  "sha256": "d7d19a0dd38a196b0c33fb7f8e183baa19b19c60971f174229e1874268139913",
+  "headers": [
+   "Streaming.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "Serial << 값 처럼 출력"
+ },
+ {
+  "id": "Talkie",
+  "name": "Talkie",
+  "version": "1.4.0",
+  "author": "Peter Knight, Armin Joachimsmeyer",
+  "src": "github.com/ArminJo/Talkie-1.4.0.zip",
+  "sha256": "b6c61107891a67011b96cdcdfae0904944645fbd00433ada3a5103c81b4b8908",
+  "headers": [
+   "Talkie.h",
+   "TalkieUtils.h"
+  ],
+  "requires": [],
+  "sim": "pins",
+  "optional": true,
+  "desc": "음성 합성"
+ },
+ {
+  "id": "TaskScheduler",
+  "name": "TaskScheduler",
+  "version": "4.1.1",
+  "author": "Anatoli Arkhipenko",
+  "src": "github.com/arkhipenko/TaskScheduler-4.1.1.zip",
+  "sha256": "28ee9c63124fc7f29a35613363cbcee2b7ede0a23854cac8818828688a6fb60c",
+  "headers": [
+   "TaskScheduler.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "여러 작업을 번갈아 실행"
+ },
+ {
+  "id": "TFT",
+  "name": "TFT",
+  "version": "1.0.6",
+  "author": "Arduino, Adafruit",
+  "src": "github.com/arduino-libraries/TFT-1.0.6.zip",
+  "sha256": "00a4a29e43e06e5c22fe2294936784a69c94d13475d8624fa2239a1a6c6aa72b",
+  "headers": [
+   "TFT.h"
+  ],
+  "requires": [],
+  "sim": "pins",
+  "optional": true,
+  "desc": "아두이노 TFT 화면"
+ },
+ {
+  "id": "TFT_eSPI",
+  "name": "TFT_eSPI",
+  "version": "2.5.43",
+  "author": "Bodmer",
+  "src": "github.com/Bodmer/TFT_eSPI-2.5.43.zip",
+  "sha256": "277a05b523f839e37309fc4de4dfcf0910d4eb0895b7335d10f4940aaf8e17fc",
+  "headers": [
+   "TFT_eSPI.h"
+  ],
+  "requires": [],
+  "sim": "pins",
+  "optional": true,
+  "desc": "ESP 용 TFT 화면"
+ },
+ {
+  "id": "ThingSpeak",
+  "name": "ThingSpeak",
+  "version": "2.1.1",
+  "author": "MathWorks",
+  "src": "github.com/mathworks/ThingSpeak-2.1.1.zip",
+  "sha256": "b3a5c54564687127579beacbd8068962caaec82de8e26878a0dfb315d9c8bba1",
+  "headers": [
+   "ThingSpeak.h"
+  ],
+  "requires": [],
+  "sim": "pins",
+  "optional": true,
+  "desc": "ThingSpeak 에 데이터 올리기"
+ },
+ {
+  "id": "Time",
+  "name": "Time",
+  "version": "1.6.1",
+  "author": "Michael Margolis",
+  "src": "github.com/PaulStoffregen/Time-1.6.1.zip",
+  "sha256": "09db5897c234f5726523fb45a11e9b6b76e56940dcc0adbbcd32a9490fa09834",
+  "headers": [
+   "TimeLib.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "날짜와 시각 다루기 (TimeLib.h)"
+ },
+ {
+  "id": "TimeAlarms",
+  "name": "TimeAlarms",
+  "version": "1.5.0",
+  "author": "Michael Margolis",
+  "src": "github.com/PaulStoffregen/TimeAlarms-1.5.0.zip",
+  "sha256": "9035dc8f104357ad3185444834f8fedcac6fe306b64e66019cccddb2ac1d206f",
+  "headers": [
+   "TimeAlarms.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "정해진 시각에 함수 실행"
+ },
+ {
+  "id": "TinyGPS",
+  "name": "TinyGPS",
+  "version": "13.0.0",
+  "author": "Mikal Hart",
+  "src": "github.com/neosarchizo/TinyGPS-13.0.0.zip",
+  "sha256": "538450123a9f4bcfda82d24c8be3d2aaf7c0078d5abf55f7eb5d89edb733c239",
+  "headers": [
+   "TinyGPS.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "GPS NMEA 읽기 (예전 버전)"
+ },
+ {
+  "id": "TM1637",
+  "name": "TM1637",
+  "version": "1.2.0",
+  "author": "Avishay Orpaz",
+  "src": "github.com/avishorp/TM1637-1.2.0.zip",
+  "sha256": "ece036479f5d983d1656ff0a1b1d750a1289e231db6dfec8939473185bf80eb1",
+  "headers": [
+   "TM1637Display.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "4자리 숫자 표시기 (TM1637Display)"
+ },
+ {
+  "id": "TMRpcm",
+  "name": "TMRpcm",
+  "version": "1.0.0",
+  "author": "TMRh20",
+  "src": "github.com/TMRh20/TMRpcm-1.0.0.zip",
+  "sha256": "2ef71bcb75bb0b10550ee8a102d6e486443037bf0be9471a8551ab33194f33cd",
+  "headers": [
+   "TMRpcm.h"
+  ],
+  "requires": [],
+  "sim": "pins",
+  "optional": true,
+  "desc": "SD 카드의 WAV 재생"
+ },
+ {
+  "id": "toneAC",
+  "name": "toneAC",
+  "version": "1.5.0",
+  "author": "Tim Eckel",
+  "src": "github.com/teckel12/toneAC-1.5.0.zip",
+  "sha256": "9c001b29ad3fe6551611dfd4f30dca51f92debd61fd9428a8e5230395c92b74b",
+  "headers": [
+   "toneAC.h"
+  ],
+  "requires": [],
+  "sim": "pins",
+  "optional": true,
+  "desc": "두 핀으로 더 크게 소리 내기"
+ },
+ {
+  "id": "U8g2",
+  "name": "U8g2",
+  "version": "2.35.27",
+  "author": "oliver",
+  "src": "github.com/olikraus/U8g2-2.35.27.zip",
+  "sha256": "ce7709ca2812ea10f6a5126b3da95581c9ef373b9a3c7f68c859d8dde83b9ae4",
+  "headers": [
+   "U8g2lib.h"
+  ],
+  "requires": [],
+  "sim": "pins",
+  "optional": true,
+  "desc": "흑백 OLED / LCD 그래픽 (글꼴이 많음)"
+ },
+ {
+  "id": "U8glib",
+  "name": "U8glib",
+  "version": "1.19.1",
+  "author": "oliver",
+  "src": "github.com/olikraus/U8glib-1.19.1.zip",
+  "sha256": "1cb90c712871bbeac283e4b7780184b5de7e3361a85de66e2cb26d4c2b991522",
+  "headers": [
+   "U8glib.h"
+  ],
+  "requires": [],
+  "sim": "pins",
+  "optional": true,
+  "desc": "흑백 OLED / LCD 그래픽 (예전 버전)"
+ },
+ {
+  "id": "UIPEthernet",
+  "name": "UIPEthernet",
+  "version": "2.0.12",
+  "author": "Norbert Truchsess,CassyArduino,Juraj And",
+  "src": "github.com/UIPEthernet/UIPEthernet-2.0.12.zip",
+  "sha256": "01a963399342c5f233c29c5459f633c949a88355c4830a1208800f424c92ecf4",
+  "headers": [
+   "UIPEthernet.h"
+  ],
+  "requires": [],
+  "sim": "pins",
+  "optional": true,
+  "desc": "ENC28J60 이더넷"
+ },
+ {
+  "id": "Ultrasonic",
+  "name": "Ultrasonic",
+  "version": "3.0.0",
+  "author": "Erick Simões",
+  "src": "github.com/ErickSimoes/Ultrasonic-3.0.0.zip",
+  "sha256": "45c4dea5ffe1e4ff07ce47f59bd8829ccd4535e8c05743ad509b416b6bc82731",
+  "headers": [
+   "Ultrasonic.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "초음파 거리 센서 (다른 구현)"
+ },
+ {
+  "id": "uRTCLib",
+  "name": "uRTCLib",
+  "version": "6.9.9",
+  "author": "Naguissa",
+  "src": "github.com/Naguissa/uRTCLib-6.9.9.zip",
+  "sha256": "1c33fe1efbfc219c0e88f42e35f5bf0a30f84546e17ecb4120336db82a05ce8d",
+  "headers": [
+   "uRTCLib.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "가벼운 RTC 라이브러리"
+ },
+ {
+  "id": "Vector",
+  "name": "Vector",
+  "version": "1.4.0",
+  "author": "Peter Polidoro",
+  "src": "github.com/janelia-arduino/Vector-1.4.0.zip",
+  "sha256": "c6069ff2e319df8f2a72fecf006e8bd20537b8453f27c3790238e8d584e0b519",
+  "headers": [
+   "Vector.h"
+  ],
+  "requires": [],
+  "sim": "full",
+  "optional": true,
+  "desc": "크기가 변하는 배열"
+ },
+ {
+  "id": "WaveHC",
+  "name": "WaveHC",
+  "version": "1.0.5",
+  "author": "William Greiman",
+  "src": "github.com/adafruit/WaveHC-1.0.5.zip",
+  "sha256": "7a9614f941e99940d8b58d9de77141e70eadfad96efd70975247c9bff6a85d20",
+  "headers": [
+   "WaveHC.h"
+  ],
+  "requires": [
+   "Adafruit_ILI9341",
+   "Adafruit_GFX_Library"
+  ],
+  "sim": "pins",
+  "optional": true,
+  "desc": "(다른 라이브러리가 함께 쓰는 부분) WaveHC wave shield library"
+ },
+ {
+  "id": "WiFiEsp",
+  "name": "WiFiEsp",
+  "version": "2.2.2",
+  "author": "bportaluri",
+  "src": "github.com/bportaluri/WiFiEsp-2.2.2.zip",
+  "sha256": "2e5f01ad857db194de8b57b90a219b1bf7d2852d918493d24ec49d6b762b2be6",
+  "headers": [
+   "WiFiEsp.h"
+  ],
+  "requires": [],
+  "sim": "pins",
+  "optional": true,
+  "desc": "ESP8266 을 AT 명령으로 쓰는 WiFi"
+ },
+ {
+  "id": "WS2812FX",
+  "name": "WS2812FX",
+  "version": "1.4.7",
+  "author": "Harm Aldick",
+  "src": "github.com/kitesurfer1404/WS2812FX-1.4.7.zip",
+  "sha256": "faa2e7495524ef1f01e17f9da5d9a9cda0dc2d059c2fbaf926e232f0b13fed0f",
+  "headers": [
+   "WS2812FX.h"
+  ],
+  "requires": [
+   "Adafruit_NeoPixel"
+  ],
+  "sim": "full",
+  "optional": true,
+  "desc": "NeoPixel 용 효과 모음"
+ }
+]
