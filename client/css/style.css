@@ -76,6 +76,10 @@ html.touch #app, html.touch .layout { transition: height 0.24s cubic-bezier(0.25
 html.touch .composer, html.touch .select-bar { transition: padding-bottom 0.24s cubic-bezier(0.25, 0.85, 0.3, 1); }
 html.touch .modal-backdrop, html.touch .sheet-backdrop { bottom: auto; height: var(--app-h, 100%); }
 html.touch .modal { max-height: calc(var(--app-h, 100dvh) - 16px); }
+/* iPhone 은 글자가 16px 보다 작은 입력칸을 누르면 화면을 확대하고 키보드를 내려도 되돌리지 않음 → 입력창이 화면 밖으로 밀림. 확대가 일어나지 않게 16px 이상으로 */
+html.touch :is(input:not([type="range"]):not([type="checkbox"]):not([type="radio"]), textarea:not(.ed-input), select) { font-size: 16px !important; }
+html.touch .ed-input, html.touch .ed-hl, html.touch .ed-gutter { font-size: 16px; line-height: 20px; } /* 편집기는 글자 층과 입력 층의 크기가 같아야 함 */
+html.touch .composer-input { font-size: max(16px, var(--msg-size)) !important; }
 button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
 button:disabled { cursor: not-allowed; opacity: 0.5; }
 input, textarea, select { font: inherit; color: inherit; }

@@ -209,7 +209,8 @@ export function createIde(host) {
   }
 
   // ── 아두이노 스케치 만들기 · 불러오기 ──
-  const inoInput = h('input', { type: 'file', accept: '.ino,.pde,.cpp,.c,.h,.txt', hidden: true, onchange: () => { const f = inoInput.files[0]; inoInput.value = ''; if (f) importIno(f); } });
+  // accept 를 두지 않음: iPhone 은 .ino 처럼 모르는 확장자를 고를 수 없게 회색으로 막아 버림
+  const inoInput = h('input', { type: 'file', hidden: true, onchange: () => { const f = inoInput.files[0]; inoInput.value = ''; if (f) importIno(f); } });
   function arduinoMenu(anchor) {
     openMenu(anchor, [
       { label: '새 아두이노 스케치 만들기', icon: 'plus', onClick: () => newProject('arduino') },
