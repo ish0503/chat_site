@@ -267,6 +267,38 @@ try {
     const listing = execFileSync('python3', ['-c', 'import zipfile,sys;print("\\n".join(zipfile.ZipFile(sys.argv[1]).namelist()))', await dl.path()]).toString();
     if (!listing.includes('웹 프로젝트/lib/util.js') || !listing.includes('웹 프로젝트/index.html')) throw new Error(`zip: ${listing}`);
   });
+  await step('arduino: sketch project, simulator run, serial monitor, add a sensor', async () => {
+    await a.click('.ide-bar button[aria-label="프로젝트 목록으로"]');
+    await a.click('.ide-home button:has-text("아두이노")');
+    await a.click('.menu-item:has-text("새 아두이노 스케치")');
+    await a.fill('.modal input.input', '깜빡이');
+    await a.click('.modal button.btn.primary');
+    await a.waitForSelector('.ide-row:has-text("sketch.ino")', { timeout: 5000 });
+    await a.waitForSelector('.ide-ardu .ardu-svg');
+    await a.click('.ide-bar button:has-text("실행")');
+    await a.waitForSelector('.ardu-log:has-text("깜빡인 횟수: 1")', { timeout: 8000 });
+    if (await a.locator('.ardu-warn').isVisible()) throw new Error(`starter circuit warns: ${await a.locator('.ardu-warn').textContent()}`);
+    await shot(a, 'arduino');
+    // 컴파일 오류는 줄 번호와 함께 시리얼 창에 표시
+    await a.click('.ardu-serial button:has-text("중지")');
+    await a.click('.ed-input');
+    await a.keyboard.press('Control+a');
+    await a.keyboard.insertText('void setup() {\n  Serial.begin(9600)\n}\nvoid loop() {}\n');
+    await a.click('.ide-bar button:has-text("실행")');
+    await a.waitForSelector('.ardu-log .run-error:has-text("2번째 줄")', { timeout: 5000 });
+    // 센서를 추가하면 회로 파일에 저장됨
+    await a.waitForTimeout(300);
+    await a.click('.ardu-bar button:has-text("부품")');
+    await a.click('.menu-item:has-text("온습도")');
+    await a.waitForSelector('.ardu-inspect:has-text("온습도")');
+    await a.waitForTimeout(1200);
+    await a.click('.ide-row:has-text("circuit.json")');
+    const saved = JSON.parse(await a.locator('.ed-input').inputValue());
+    if (!saved.parts.some((p) => p.type === 'dht')) throw new Error('circuit not saved');
+    await a.click('.ide-bar button[aria-label="프로젝트 목록으로"]');
+    await a.click('.project-card:has-text("웹 프로젝트")');
+    await a.waitForSelector('.ide-project');
+  });
   await step('code room: chat view and back to workspace', async () => {
     await a.click('.ws-chat-btn');
     await a.waitForSelector('.chat-view .msg:has-text("calc.js")', { timeout: 5000 });

@@ -12,6 +12,8 @@ import {
   openModal, openMenu, confirmDialog, field, avatar,
 } from './common.js';
 import { errorText } from './errors.js';
+import { createArduinoPane } from './arduino.js';
+import { starterCircuit, emptyCircuit, STARTER_SKETCH } from '../arduino/parts.js';
 
 const TEMPLATES = {
   empty: { label: '빈 프로젝트', desc: '파일 없이 시작', files: { 'README.md': '# 새 프로젝트\n' } },
@@ -37,8 +39,16 @@ const TEMPLATES = {
       'lib/math.js': 'export function add(a, b) {\n  return a + b;\n}\n',
     },
   },
+  arduino: {
+    label: '아두이노 (.ino)', desc: '회로 연결 + 시리얼 모니터',
+    files: { 'sketch.ino': STARTER_SKETCH, 'sketch.circuit.json': JSON.stringify(starterCircuit(), null, 1) },
+  },
 };
-const LANG_NAME = { javascript: 'JavaScript', python: 'Python', html: 'HTML', css: 'CSS', json: 'JSON', markdown: 'Markdown', typescript: 'TypeScript', plaintext: '텍스트' };
+// 아두이노: 스케치(.ino) 옆에 같은 이름의 회로 파일(.circuit.json)을 둠
+const isIno = (f) => !!f && f.kind === 'file' && /\.ino$/i.test(f.name);
+const circuitName = (inoName) => `${inoName.replace(/\.ino$/i, '')}.circuit.json`;
+const blankCircuit = () => ({ ...emptyCircuit(), parts: [{ id: 'bb1', type: 'breadboard', x: 0, y: 250, props: {} }] });
+const LANG_NAME = { javascript: 'JavaScript', python: 'Python', html: 'HTML', css: 'CSS', json: 'JSON', markdown: 'Markdown', typescript: 'TypeScript', plaintext: '텍스트', cpp: 'C++', c: 'C' };
 const PAIRS = { '(': ')', '[': ']', '{': '}', '"': '"', "'": "'", '`': '`' };
 const COMMENT = { python: '# ', bash: '# ', yaml: '# ', sql: '-- ', html: null, css: null, markdown: null };
 const ext = (name) => (name.includes('.') ? name.split('.').pop().toLowerCase() : '');
@@ -160,7 +170,7 @@ export function createIde(host) {
   const { data } = ctx;
   const el = h('div', { class: 'ide' });
   const st = {
-    project: null, tabs: [], active: null, buffers: new Map(), collapsed: new Set(), runCtl: null, outOpen: false, explorerOpen: !isMobile(), remote: new Map(), focus: new Map(),
+    project: null, tabs: [], active: null, buffers: new Map(), collapsed: new Set(), runCtl: null, outOpen: false, explorerOpen: !isMobile(), remote: new Map(), focus: new Map(), arduFile: null,
   };
   const stateKey = () => `cs.ide.${host.roomId}`;
   const saveState = () => { try { localStorage.setItem(stateKey(), JSON.stringify({ project: st.project, tabs: st.tabs, active: st.active })); } catch { /* noop */ } };
@@ -182,19 +192,52 @@ export function createIde(host) {
     el.className = 'ide ide-home';
     el.replaceChildren(
       h('div', { class: 'ide-home-head' }, h('h2', {}, icon('code', 22), ' 프로젝트'), h('span', { class: 'muted' }, `${list.length}개`),
-        host.canEdit ? h('button', { class: 'btn primary small', onclick: () => newProject() }, icon('plus', 16), ' 새 프로젝트') : null),
+        host.canEdit ? h('span', { class: 'ide-home-actions' },
+          h('button', { class: 'btn secondary small', onclick: (e) => arduinoMenu(e.currentTarget) }, icon('chip', 16), ' 아두이노'),
+          h('button', { class: 'btn primary small', onclick: () => newProject() }, icon('plus', 16), ' 새 프로젝트')) : null, inoInput),
       list.length ? h('div', { class: 'project-grid' }, list.map((p) => {
         const files = projectFiles(p.id);
-        const langs = [...new Set(files.map((f) => LANG_NAME[langFromName(f.name)] || ext(f.name).toUpperCase()).filter(Boolean))].slice(0, 3);
+        const langs = [...new Set(files.filter((f) => !/\.circuit\.json$/.test(f.name)).map((f) => (isIno(f) ? '아두이노' : LANG_NAME[langFromName(f.name)] || ext(f.name).toUpperCase())).filter(Boolean))].slice(0, 3);
         return h('div', { class: 'project-card', role: 'button', tabindex: '0', onclick: () => openProject(p.id), onkeydown: (e) => { if (e.key === 'Enter') openProject(p.id); } },
-          h('div', { class: 'project-icon' }, icon('folder', 26)),
+          h('div', { class: 'project-icon' }, icon(files.some(isIno) ? 'chip' : 'folder', 26)),
           h('div', { class: 'project-info' }, h('strong', { class: 'ellipsis' }, p.name), h('span', { class: 'muted small' }, `${langs.join(' · ') || '빈 프로젝트'} · 파일 ${files.length}개`),
             h('span', { class: 'muted small' }, `${fmtStamp(Math.max(p.updatedAt || 0, ...files.map((f) => f.updatedAt || 0)))} 수정`)),
           h('button', { class: 'icon-btn tiny', 'aria-label': `${p.name} 메뉴`, onclick: (e) => { e.stopPropagation(); projectMenu(p, e.currentTarget); } }, icon('more', 18)));
       })) : h('div', { class: 'empty' }, icon('code', 40), h('h3', {}, '아직 프로젝트가 없습니다'),
         h('p', { class: 'muted' }, host.canEdit ? '새 프로젝트를 만들어 파일을 추가하고, 편집하고, 바로 실행해 보세요.' : '로그인한 사용자가 프로젝트를 만들면 여기에 표시됩니다.')),
-      h('p', { class: 'muted small ide-note' }, '코드는 브라우저 안의 격리된 샌드박스에서 실행됩니다 (HTML · JavaScript · Python). 이 사이트의 로그인 정보에는 접근할 수 없습니다.'));
+      h('p', { class: 'muted small ide-note' }, '코드는 브라우저 안의 격리된 샌드박스에서 실행됩니다 (HTML · JavaScript · Python). 이 사이트의 로그인 정보에는 접근할 수 없습니다. 아두이노 스케치(.ino)는 회로를 연결해 시뮬레이터로 실행합니다.'));
   }
+
+  // ── 아두이노 스케치 만들기 · 불러오기 ──
+  const inoInput = h('input', { type: 'file', accept: '.ino,.pde,.cpp,.c,.h,.txt', hidden: true, onchange: () => { const f = inoInput.files[0]; inoInput.value = ''; if (f) importIno(f); } });
+  function arduinoMenu(anchor) {
+    openMenu(anchor, [
+      { label: '새 아두이노 스케치 만들기', icon: 'plus', onClick: () => newProject('arduino') },
+      { label: '.ino 파일 불러오기', icon: 'clip', onClick: () => inoInput.click() },
+    ]);
+  }
+  const importIno = guard(async (file) => {
+    if (file.size > 200_000) return toast('파일이 너무 큽니다 (최대 200KB).', 'warn');
+    const text = await file.text();
+    if (text.includes('\u0000')) return toast('텍스트 파일이 아닙니다.', 'warn');
+    const base = file.name.replace(/\.[^.]+$/, '').replace(/\//g, '_').slice(0, 80) || 'sketch';
+    const pid = uid();
+    await data.putWsMany(host.roomId, [{ id: pid, kind: 'project', name: base, template: 'arduino' },
+      ...filesToItems({ [`${base}.ino`]: text, [circuitName(`${base}.ino`)]: JSON.stringify(blankCircuit(), null, 1) }, pid)]);
+    openProject(pid);
+    toast('스케치를 불러왔습니다. 오른쪽에서 회로를 연결하고 ▶ 실행을 누르세요.', 'success', 4500);
+    return null;
+  });
+  /** 열려 있는 프로젝트에 스케치 추가 */
+  const addSketch = guard(async () => {
+    const active = host.items.get(st.active);
+    const parent = active ? active.parentId : st.project;
+    const name = uniqueName(parent, 'sketch.ino');
+    const id = uid();
+    await data.putWsMany(host.roomId, [{ id, kind: 'file', name, parentId: parent, content: STARTER_SKETCH },
+      { id: uid(), kind: 'file', name: circuitName(name), parentId: parent, content: JSON.stringify(starterCircuit(), null, 1) }]);
+    openFile(id);
+  });
 
   function projectMenu(p, anchor) {
     openMenu(anchor, [
@@ -206,9 +249,9 @@ export function createIde(host) {
     ]);
   }
 
-  function newProject() {
-    const name = h('input', { class: 'input', maxlength: '100', placeholder: '내 프로젝트', autofocus: true });
-    let tpl = 'web';
+  function newProject(initial = 'web') {
+    const name = h('input', { class: 'input', maxlength: '100', placeholder: initial === 'arduino' ? '내 아두이노' : '내 프로젝트', autofocus: true });
+    let tpl = initial;
     const picker = h('div', { class: 'tpl-picker', role: 'radiogroup' });
     const render = () => picker.replaceChildren(...Object.entries(TEMPLATES).map(([k, t]) => h('button', {
       type: 'button', role: 'radio', 'aria-checked': String(k === tpl), class: `type-opt${k === tpl ? ' active' : ''}`, onclick: () => { tpl = k; render(); },
@@ -221,7 +264,7 @@ export function createIde(host) {
         label: '만들기', kind: 'primary', submit: true,
         onClick: guard(async () => {
           const pid = uid();
-          const items = [{ id: pid, kind: 'project', name: name.value.trim() || '내 프로젝트', template: tpl }, ...filesToItems(TEMPLATES[tpl].files, pid)];
+          const items = [{ id: pid, kind: 'project', name: name.value.trim() || (tpl === 'arduino' ? '내 아두이노' : '내 프로젝트'), template: tpl }, ...filesToItems(TEMPLATES[tpl].files, pid)];
           await data.putWsMany(host.roomId, items);
           openProject(pid);
         }),
@@ -280,12 +323,49 @@ export function createIde(host) {
   const outEl = h('div', { class: 'ide-out', hidden: true });
   const titleEl = h('strong', { class: 'ellipsis' });
   const statusEl = h('span', { class: 'muted small ide-status' });
+  // 아두이노 창 (스케치 .ino 를 열면 오른쪽에 뜸): 위는 회로 연결, 아래는 시리얼 모니터
+  const arduEl = h('div', { class: 'ide-ardu', hidden: true });
+  let ardu = null;
+  const arduToggle = h('button', { class: 'btn small secondary ide-ardu-toggle', hidden: true, onclick: () => showArdu(!el.classList.contains('ardu-front')) });
+  function showArdu(front) {
+    el.classList.toggle('ardu-front', front);
+    arduToggle.replaceChildren(icon(front ? 'code' : 'chip', 14), front ? ' 코드' : ' 회로 · 출력');
+    if (front) ardu?.shown();
+  }
+  const arduCircuitFile = (ino) => kids(ino.parentId).find((k) => k.kind === 'file' && k.name === circuitName(ino.name));
+  const saveCircuit = guard(async (text) => {
+    const ino = host.items.get(st.arduFile);
+    if (!ino || !host.canEdit) return;
+    const file = arduCircuitFile(ino);
+    st.buffers.delete(file?.id);
+    await data.putWs(host.roomId, file ? { id: file.id, kind: 'file', content: text } : { id: uid(), kind: 'file', name: circuitName(ino.name), parentId: ino.parentId, content: text });
+  });
+  /** 지금 보는 파일이 스케치면 아두이노 창을 띄우고 그 스케치의 회로를 불러옴 */
+  function syncArdu() {
+    const f = host.items.get(st.active);
+    const on = isIno(f);
+    arduEl.hidden = !on;
+    arduToggle.hidden = !on;
+    el.classList.toggle('has-ardu', on);
+    if (!on) { ardu?.stop({ quiet: true }); st.arduFile = null; el.classList.remove('ardu-front'); return; }
+    if (!ardu) {
+      ardu = createArduinoPane({
+        canEdit: host.canEdit,
+        onRun: () => runProject(),
+        onGoto: (line) => { showArdu(false); editor.goto(line); },
+        saveCircuit,
+      });
+      arduEl.append(ardu.el);
+    }
+    if (st.arduFile !== f.id) { ardu.stop({ quiet: true }); st.arduFile = f.id; showArdu(false); ardu.setCircuit(arduCircuitFile(f)?.content, blankCircuit()); } else { const c = arduCircuitFile(f)?.content; if (c) ardu.setCircuit(c); }
+    ardu.shown();
+  }
   const uploadInput = h('input', { type: 'file', multiple: true, hidden: true, onchange: () => { importFiles([...uploadInput.files]); uploadInput.value = ''; } });
 
   const toolbar = h('div', { class: 'ide-bar' },
     h('button', { class: 'icon-btn', title: '프로젝트 목록', 'aria-label': '프로젝트 목록으로', onclick: () => closeProject() }, icon('chevronLeft')),
     h('button', { class: 'icon-btn', title: '파일 탐색기', 'aria-label': '파일 탐색기 열기/닫기', onclick: () => { st.explorerOpen = !st.explorerOpen; el.classList.toggle('explorer-open', st.explorerOpen); } }, icon('folder')),
-    titleEl, statusEl, h('span', { class: 'grow' }),
+    titleEl, statusEl, h('span', { class: 'grow' }), arduToggle,
     h('button', { class: 'btn small primary', title: '실행 (Ctrl+Enter)', onclick: () => runProject() }, icon('play', 14), ' 실행'),
     host.canEdit ? h('button', { class: 'icon-btn', title: '저장 (Ctrl+S)', 'aria-label': '저장', onclick: () => save(st.active) }, icon('check')) : null,
     h('button', { class: 'icon-btn', title: '프로젝트에서 찾기', 'aria-label': '프로젝트에서 찾기', onclick: () => searchDialog() }, icon('search')),
@@ -297,7 +377,7 @@ export function createIde(host) {
         host.canEdit ? h('button', { class: 'icon-btn tiny', title: '새 폴더', 'aria-label': '새 폴더', onclick: () => createItem('folder') }, icon('folder', 16)) : null,
         host.canEdit ? h('button', { class: 'icon-btn tiny', title: '내 컴퓨터에서 파일 가져오기', 'aria-label': '파일 가져오기', onclick: () => uploadInput.click() }, icon('clip', 16)) : null),
       explorer, uploadInput),
-    h('div', { class: 'ide-center' }, tabsEl, notice, editorWrap, outEl));
+    h('div', { class: 'ide-center' }, tabsEl, notice, editorWrap, outEl), arduEl);
 
   function openProject(id, restore = {}) {
     if (!host.items.has(id)) return renderProjects();
@@ -309,13 +389,15 @@ export function createIde(host) {
     titleEl.textContent = host.items.get(id).name;
     renderExplorer();
     const files = projectFiles();
-    const first = host.items.get(restore.active) || files.find((f) => /^(index\.html|main\.(py|js))$/.test(f.name)) || files[0];
+    const first = host.items.get(restore.active) || files.find((f) => /^(index\.html|main\.(py|js))$/.test(f.name)) || files.find(isIno) || files[0];
     if (first) openFile(first.id); else { renderTabs(); showEditor(); }
     saveState();
   }
 
   function closeProject() {
     stopRun();
+    ardu?.stop({ quiet: true });
+    st.arduFile = null;
     st.project = null;
     st.tabs = [];
     st.active = null;
@@ -340,7 +422,7 @@ export function createIde(host) {
         ondragleave: () => r.classList.remove('drop'),
         ondrop: (e) => { r.classList.remove('drop'); const id = e.dataTransfer.getData('text/x-ws'); if (folder && id) { e.preventDefault(); e.stopPropagation(); moveItem(id, item.id); } },
       }, folder ? icon(open ? 'chevronDown' : 'chevron', 12, 'dim') : h('span', { class: 'ide-indent' }),
-      icon(folder ? (open ? 'folderOpen' : 'folder') : runnable(langFromName(item.name)) ? 'code' : 'file', 16, folder ? 'dim' : ''),
+      icon(folder ? (open ? 'folderOpen' : 'folder') : isIno(item) ? 'chip' : runnable(langFromName(item.name)) ? 'code' : 'file', 16, folder ? 'dim' : ''),
       h('span', { class: 'ellipsis grow' }, item.name),
       dirty(item.id) ? h('span', { class: 'ide-dot', title: '저장하지 않은 변경' }) : null,
       watchers.slice(0, 2).map((u) => h('span', { title: `${u.nickname}님이 보는 중` }, avatar(u, 16))),
@@ -487,6 +569,7 @@ export function createIde(host) {
 
   function showEditor() {
     renderNotice();
+    syncArdu();
     if (st.active) { if (editorWrap.firstChild !== editor.el) editorWrap.replaceChildren(editor.el); return; }
     editorWrap.replaceChildren(h('div', { class: 'empty' }, icon('file', 40), h('h3', {}, '파일을 선택하세요'),
       h('p', { class: 'muted' }, '왼쪽 탐색기에서 파일을 열거나 새 파일을 만드세요.'),
@@ -560,6 +643,7 @@ export function createIde(host) {
       st.active ? { label: '버전 기록', icon: 'history', onClick: () => historyDialog(host.items.get(st.active)) } : null,
       { label: 'ZIP 으로 내보내기', icon: 'download', onClick: () => exportZip(p) },
       host.canEdit ? { label: '파일 가져오기', icon: 'clip', onClick: () => uploadInput.click() } : null,
+      host.canEdit ? { label: '아두이노 스케치 추가 (.ino)', icon: 'chip', onClick: () => addSketch() } : null,
       host.canEdit ? { label: '프로젝트 이름 변경', icon: 'edit', onClick: () => renameItem(p) } : null,
       { label: st.outOpen ? '실행 창 닫기' : '실행 창 열기', icon: 'play', onClick: () => toggleOut(!st.outOpen) },
     ]);
@@ -620,9 +704,17 @@ export function createIde(host) {
     if (host.canEdit) await Promise.all(st.tabs.filter(dirty).map((id) => save(id)));
     const files = projectFiles();
     const active = host.items.get(st.active);
+    // 아두이노 스케치: 회로 시뮬레이터로 실행
+    const ino = isIno(active) ? active : (!files.some((f) => runnable(langFromName(f.name))) ? files.find(isIno) : null);
+    if (ino) {
+      if (st.active !== ino.id) openFile(ino.id);
+      if (st.outOpen) toggleOut(false);
+      if (ardu?.start(contentOf(ino))) showArdu(true);
+      return undefined;
+    }
     const target = (active && runnable(langFromName(active.name)) ? active : null)
       || files.find((f) => pathOf(f) === 'index.html') || files.find((f) => /^main\.(py|js)$/.test(f.name)) || files.find((f) => runnable(langFromName(f.name)));
-    if (!target) return toast('실행할 수 있는 파일이 없습니다 (.html · .js · .py).', 'warn');
+    if (!target) return toast('실행할 수 있는 파일이 없습니다 (.html · .js · .py · .ino).', 'warn');
     let kind = runnable(langFromName(target.name));
     let code;
     try {
@@ -640,7 +732,7 @@ export function createIde(host) {
     } catch (e) {
       toggleOut(true);
       outEl.replaceChildren(h('div', { class: 'run-line run-error pad' }, e.message));
-      return;
+      return undefined;
     }
     stopRun();
     toggleOut(true);
@@ -663,6 +755,7 @@ export function createIde(host) {
         status.className = `run-status ${ok ? 'ok' : 'bad'}`;
       },
     });
+    return undefined;
   }
 
   // 다른 사람이 어떤 파일을 보고 있는지
@@ -695,6 +788,7 @@ export function createIde(host) {
     },
     close() {
       stopRun();
+      ardu?.stop({ quiet: true });
       clearInterval(focusTimer);
       offFocus();
       for (const id of st.tabs) if (dirty(id) && host.canEdit) save(id);

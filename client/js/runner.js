@@ -21,7 +21,7 @@ export function langFromName(name = '') {
   const ext = name.split('.').pop().toLowerCase();
   return {
     js: 'javascript', mjs: 'javascript', py: 'python', html: 'html', htm: 'html', css: 'css', json: 'json', md: 'markdown',
-    ts: 'typescript', c: 'c', h: 'c', cpp: 'cpp', cc: 'cpp', java: 'java', go: 'go', rs: 'rust', sh: 'bash', sql: 'sql',
+    ts: 'typescript', c: 'c', h: 'c', cpp: 'cpp', ino: 'cpp', pde: 'cpp', cc: 'cpp', java: 'java', go: 'go', rs: 'rust', sh: 'bash', sql: 'sql',
     yml: 'yaml', yaml: 'yaml', xml: 'xml', kt: 'kotlin', swift: 'swift', rb: 'ruby', php: 'php', csv: 'plaintext', txt: 'plaintext', log: 'plaintext',
   }[ext] || null;
 }
