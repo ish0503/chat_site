@@ -60,7 +60,13 @@ const cleanUser = (u) => u && ({
   presence: u.presence || 'online',
   createdAt: u.createdAt,
   lastSeen: u.lastSeen,
+  ...(u.deleted ? { deleted: true, deletedAt: u.deletedAt, purgeAt: u.purgeAt } : {}),
 });
+const DELETED_NAME = '삭제된 계정';
+/** 메시지를 내보낼 때: 누가 '나에게서만 삭제' 했는지는 상대에게 알리지 않음 */
+const outMsg = (doc) => { if (!doc) return doc; const { _id, hiddenFor, ...rest } = doc; return { id: _id, ...rest }; };
+/** 1:1 대화에서 이 사용자에게 보이는 메시지만 고르는 조건 ('나에게서만 삭제' · '대화 내용 지우기') */
+const shownTo = (uid, clearedAt = 0) => ({ hiddenFor: { $ne: uid }, ...(clearedAt ? { createdAt: { $gt: clearedAt } } : {}) });
 const kindOf = (mime = '') => (mime.startsWith('image/') ? 'image' : mime.startsWith('video/') ? 'video' : mime.startsWith('audio/') ? 'audio' : 'file');
 
 function sanitizeAvatar(v) {
@@ -151,12 +157,14 @@ async function authHttp(req) {
   const s = await verifySession(token);
   const u = await store.col('users').findOne({ _id: s.sub });
   if (!u) throw fail('unauthorized', 401);
+  if (u.deleted) throw fail('account_deleted', 410);
   return cleanUser(u);
 }
 
 async function upsertUser({ id, provider, nickname, avatar, secretHash }) {
   const users = store.col('users');
   const existing = await users.findOne({ _id: id });
+  if (existing?.deleted) throw fail('account_deleted', 410);
   if (existing) {
     await users.updateOne({ _id: id }, { $set: { lastSeen: Date.now() } });
     return existing;
@@ -279,6 +287,7 @@ app.post('/api/auth/guest', httpLimit(limiters.auth, ipKey), requireDb, route(as
   if (typeof secret !== 'string' || secret.length < 16 || secret.length > 128) throw fail('invalid_secret');
   const existing = await store.col('users').findOne({ _id: id });
   if (existing) {
+    if (existing.deleted) throw fail('account_deleted', 410); // 오래 접속하지 않아 삭제된 게스트: 새로 입장해야 함
     if (existing.provider !== 'guest' || !sameHash(existing.secretHash, hashSecret(secret))) throw fail('forbidden', 403);
     await store.col('users').updateOne({ _id: id }, { $set: { lastSeen: Date.now() } });
     return authResponse(res, existing);
@@ -459,6 +468,61 @@ setInterval(async () => {
   }
 }, 15 * 60_000).unref();
 
+// ───────────────────────── 계정 정리 ─────────────────────────
+/**
+ * 계정 삭제: 사용자 문서는 남겨 두어 채널에 남은 메시지의 작성자를 '삭제된 계정'으로 보여 주고,
+ * 이름 · 사진 · 소개와 로그인 정보는 지움. 그 사람과 나눈 1:1 대화는 유예 기간 뒤 purgeDeletedDms() 가 지움.
+ */
+async function deleteAccount(id, by) {
+  const t = Date.now();
+  const set = { nickname: DELETED_NAME, deleted: true, deletedAt: t, deletedBy: by, purgeAt: t + config.deletedDmGraceDays * 86400_000, presence: 'online' };
+  await store.col('users').updateOne({ _id: id }, { $set: set, $unset: { secretHash: '', avatar: '', status: '', bio: '', banner: '' } });
+  const doc = await store.col('users').findOne({ _id: id });
+  io.emit('user:upsert', cleanUser(doc));
+  for (const s of await io.in(`user:${id}`).fetchSockets()) s.disconnect(true); // (오프라인일 때만 지우지만 혹시 남은 연결이 있으면 끊음)
+  return doc;
+}
+
+/** 오래 접속하지 않은 게스트 자동 삭제 */
+async function expireGuests() {
+  if (!config.guestTtlDays || !store.isReady()) return 0;
+  const cutoff = Date.now() - config.guestTtlDays * 86400_000;
+  const stale = await store.col('users').find({ provider: 'guest', deleted: { $ne: true } }, { projection: { lastSeen: 1, createdAt: 1 } }).toArray();
+  let n = 0;
+  for (const u of stale) {
+    if ((u.lastSeen || u.createdAt || 0) >= cutoff || onlineCount.has(u._id)) continue;
+    await deleteAccount(u._id, 'auto');
+    n++;
+  }
+  if (n) console.log(`[accounts] ${config.guestTtlDays}일 동안 접속하지 않은 게스트 ${n}명 삭제`);
+  return n;
+}
+
+/** 삭제된 지 유예 기간이 지난 계정과 나눈 1:1 대화(메시지 · 첨부파일 · 방)를 서버에서 지움 */
+async function purgeDeletedDms() {
+  if (!store.isReady()) return 0;
+  const due = await store.col('users').find({ deleted: true, dmPurged: { $ne: true }, purgeAt: { $lte: Date.now() } }, { projection: { _id: 1 } }).toArray();
+  let rooms = 0;
+  for (const u of due) {
+    const dms = await store.col('nodes').find({ type: 'dm', members: u._id }).toArray();
+    const ids = dms.map((n) => n._id);
+    if (ids.length) {
+      const msgs = await store.col('messages').find({ roomId: { $in: ids } }, { projection: { attachments: 1 } }).toArray();
+      await deleteFiles(msgs.flatMap((m) => (m.attachments || []).map((a) => a.id)));
+      await store.col('messages').deleteMany({ roomId: { $in: ids } });
+      await store.col('nodes').deleteMany({ _id: { $in: ids } });
+      await store.col('dmclear').deleteMany({ roomId: { $in: ids } });
+      for (const n of dms) { roomCache.delete(n._id); audience(n.members).emit('node:remove', { ids: [n._id] }); }
+      rooms += ids.length;
+    }
+    await store.col('users').updateOne({ _id: u._id }, { $set: { dmPurged: true } });
+  }
+  if (rooms) console.log(`[accounts] 삭제된 계정과의 1:1 대화 ${rooms}개 정리`);
+  return rooms;
+}
+const housekeeping = () => expireGuests().then(purgeDeletedDms).catch((e) => console.warn('[accounts] 정리 실패', e.message));
+setInterval(housekeeping, Number(process.env.ACCOUNT_SWEEP_MS) || 60 * 60_000).unref();
+
 // ───────────────────────── Socket.IO ─────────────────────────
 const server = http.createServer(app);
 const io = new Server(server, { cors: corsOptions, maxHttpBufferSize: 1e6 });
@@ -502,7 +566,7 @@ function roomSettings(src, type) {
 // 1:1 대화방의 이벤트는 두 참여자에게만, 나머지는 모두에게
 const audience = (members) => (members ? io.to(members.map((u) => `user:${u}`)) : io);
 const emitNode = (doc) => audience(doc.type === 'dm' ? doc.members : null).emit('node:upsert', out(doc));
-const emitMsg = (doc) => audience(doc.members).emit('msg:upsert', out(doc));
+const emitMsg = (doc) => audience(doc.members ? doc.members.filter((u) => !(doc.hiddenFor || []).includes(u)) : null).emit('msg:upsert', outMsg(doc));
 const emitMsgRemove = (m) => audience(m.members).emit('msg:remove', { id: m._id, roomId: m.roomId });
 
 const callList = (roomId) => [...(calls.get(roomId)?.values() || [])];
@@ -530,6 +594,7 @@ io.use(async (socket, next) => {
     const s = await verifySession(socket.handshake.auth?.token);
     const u = await store.col('users').findOne({ _id: s.sub });
     if (!u) return next(new Error('unauthorized'));
+    if (u.deleted) return next(new Error('account_deleted'));
     socket.data.user = cleanUser(u);
     next();
   } catch (e) {
@@ -580,9 +645,11 @@ io.on('connection', (socket) => {
   /** 이 사용자가 볼 수 있는 메시지인지 확인 */
   async function accessMessage(id) {
     const m = typeof id === 'string' ? await messages().findOne({ _id: id }) : null;
-    if (!m || (m.members && !m.members.includes(userId))) throw fail('not_found', 404);
+    if (!m || (m.members && !m.members.includes(userId)) || (m.hiddenFor || []).includes(userId)) throw fail('not_found', 404);
     return m;
   }
+  /** 1:1 대화에서 '대화 내용 지우기' 를 한 시각 (그 전 메시지는 나에게 안 보임) */
+  const clearedAt = async (room, roomId) => (room?.type === 'dm' ? (await store.col('dmclear').findOne({ _id: `${roomId}:${userId}` }))?.at || 0 : 0);
   const canDelete = (m) => m.authorId === userId || (!m.members && can(me(), 'deleteAnyMessage'));
 
   on('sync', {}, async () => {
@@ -606,8 +673,9 @@ io.on('connection', (socket) => {
   // ── 1:1 대화 ──
   on('dm:open', { perm: 'directMessage' }, async ({ userId: other }) => {
     if (typeof other !== 'string' || other === userId) throw fail('invalid_user');
-    const target = await store.col('users').findOne({ _id: other }, { projection: { _id: 1 } });
+    const target = await store.col('users').findOne({ _id: other }, { projection: { _id: 1, deleted: 1 } });
     if (!target) throw fail('not_found', 404);
+    if (target.deleted) throw fail('user_deleted', 410);
     const _id = dmIdFor(userId, other);
     const existing = await nodes().findOne({ _id });
     if (existing) return { node: out(existing) };
@@ -710,12 +778,61 @@ io.on('connection', (socket) => {
 
   // ── 메시지 ──
   on('msg:list', {}, async ({ roomId, before, limit }) => {
-    await accessRoom(roomId);
+    const room = await accessRoom(roomId);
     const n = Math.min(Math.max(Number(limit) || 50, 1), 100);
     const q = { roomId };
-    if (Number.isFinite(Number(before))) q.createdAt = { $lt: Number(before) };
+    if (room.type === 'dm') Object.assign(q, shownTo(userId, await clearedAt(room, roomId)));
+    if (Number.isFinite(Number(before))) q.createdAt = { ...q.createdAt, $lt: Number(before) };
     const list = await messages().find(q).sort({ createdAt: -1 }).limit(n).toArray();
-    return { messages: list.reverse().map(out) };
+    return { messages: list.reverse().map(outMsg), ...(room.type === 'dm' ? { clearedAt: await clearedAt(room, roomId) } : {}) };
+  });
+
+  // ── 1:1 대화: 나에게서만 지우기 (상대에게는 그대로, 서버에도 남음) ──
+  on('msg:hide', { cost: 2 }, async ({ ids }) => {
+    const list = Array.isArray(ids) ? [...new Set(ids.filter((x) => typeof x === 'string'))].slice(0, 100) : [];
+    if (!list.length) return { hidden: [] };
+    const found = (await messages().find({ _id: { $in: list } }).toArray()).filter((m) => m.members?.includes(userId));
+    if (!found.length) return { hidden: [] };
+    await messages().updateMany({ _id: { $in: found.map((m) => m._id) } }, { $addToSet: { hiddenFor: userId } });
+    // 두 사람 모두 지운 메시지는 서버에서도 지움 (서버 부담 줄이기)
+    const gone = found.filter((m) => m.members.every((u) => u === userId || (m.hiddenFor || []).includes(u)));
+    if (gone.length) {
+      await messages().deleteMany({ _id: { $in: gone.map((m) => m._id) } });
+      await deleteFiles(gone.flatMap((m) => (m.attachments || []).map((a) => a.id)));
+    }
+    return { hidden: found.map((m) => m._id) };
+  });
+
+  on('dm:clear', {}, async ({ roomId }) => {
+    const room = await accessRoom(roomId);
+    if (room.type !== 'dm') throw fail('not_dm');
+    const at = Date.now();
+    await store.col('dmclear').deleteOne({ _id: `${roomId}:${userId}` });
+    await store.col('dmclear').insertOne({ _id: `${roomId}:${userId}`, roomId, userId, at });
+    // 두 사람 모두 지운 부분은 서버에서도 지움
+    const marks = await store.col('dmclear').find({ roomId }).toArray();
+    if (room.members.every((u) => marks.some((x) => x.userId === u))) {
+      const upto = Math.min(...marks.map((x) => x.at));
+      const old = await messages().find({ roomId, createdAt: { $lte: upto } }, { projection: { attachments: 1 } }).toArray();
+      await deleteFiles(old.flatMap((m) => (m.attachments || []).map((a) => a.id)));
+      await messages().deleteMany({ roomId, createdAt: { $lte: upto } });
+    }
+    return { clearedAt: at };
+  });
+
+  // ── 게스트 계정 정리: 로그인한 사용자가 지금 접속하지 않은 게스트 계정을 삭제 ──
+  on('user:deleteGuests', { perm: 'removeGuests', cost: 5 }, async ({ ids }) => {
+    const list = Array.isArray(ids) ? [...new Set(ids.filter((x) => typeof x === 'string'))].slice(0, 200) : [];
+    const found = list.length ? await store.col('users').find({ _id: { $in: list } }).toArray() : [];
+    const deleted = []; const skipped = [];
+    for (const u of found) {
+      if (u.provider !== 'guest' || u.deleted) continue;
+      if (onlineCount.has(u._id)) { skipped.push(u._id); continue; } // 지금 접속 중인 게스트는 지울 수 없음
+      await deleteAccount(u._id, userId);
+      deleted.push(u._id);
+    }
+    if (list.length === 1 && skipped.length) throw fail('user_online', 409);
+    return { deleted, skipped };
   });
 
   on('msg:send', { perm: 'sendMessage' }, async ({
@@ -737,6 +854,10 @@ io.on('connection', (socket) => {
     if (!visibleTo(room, userId) || !CHAT_TYPES.includes(room.type)) throw fail('room_not_found', 404);
     if (room.readonly && !can(me(), 'manageNodes')) throw fail('readonly', 403);
     const members = room.type === 'dm' ? room.members : null;
+    if (members) { // 상대 계정이 삭제된 1:1 대화에는 보낼 수 없음
+      const other = members.find((u) => u !== userId);
+      if (other && (await store.col('users').findOne({ _id: other }, { projection: { deleted: 1 } }))?.deleted) throw fail('user_deleted', 410);
+    }
     const t = Date.now();
     const slowKey = `${roomId}:${userId}`;
     if (room.slowmode && room.createdBy !== userId && t - (lastSent.get(slowKey) || 0) < room.slowmode * 1000) throw fail('slowmode', 429);
@@ -801,7 +922,7 @@ io.on('connection', (socket) => {
     emitMsg(doc);
     // 방의 마지막 메시지 시각은 전송 완료를 기다리지 않고 갱신
     nodes().updateOne({ _id: roomId, lastMessageAt: { $lt: doc.createdAt } }, { $set: { lastMessageAt: doc.createdAt } }).catch(() => {});
-    return { message: out(doc) };
+    return { message: outMsg(doc) };
   });
 
   on('msg:vote', { perm: 'react' }, async ({ id, optionId, on: add }) => {
@@ -892,9 +1013,10 @@ io.on('connection', (socket) => {
   });
 
   on('msg:pins', {}, async ({ roomId }) => {
-    await accessRoom(roomId);
-    const list = await messages().find({ roomId, pinned: true }).sort({ pinnedAt: -1 }).limit(100).toArray();
-    return { messages: list.map(out) };
+    const room = await accessRoom(roomId);
+    const q = { roomId, pinned: true, ...(room.type === 'dm' ? shownTo(userId, await clearedAt(room, roomId)) : {}) };
+    const list = await messages().find(q).sort({ pinnedAt: -1 }).limit(100).toArray();
+    return { messages: list.map(outMsg) };
   });
 
   // 검색: 내용/파일 이름, 보낸 사람(from), 종류(has), 기간(before/after), 나를 멘션한 메시지(mentions)
@@ -923,8 +1045,11 @@ io.on('connection', (socket) => {
     if (typeof roomId === 'string' && roomId) await accessRoom(roomId);
     // 내가 참여하지 않은 1:1 대화는 검색하지 않음
     and.push({ $or: [{ members: { $exists: false } }, { members: userId }] });
-    const list = await messages().find({ $and: and }).sort({ createdAt: -1 }).limit(has ? 100 : 50).toArray();
-    return { messages: list.map(out) };
+    and.push({ hiddenFor: { $ne: userId } });
+    const clears = await store.col('dmclear').find({ userId }).toArray();
+    let list = await messages().find({ $and: and }).sort({ createdAt: -1 }).limit(has ? 100 : 50).toArray();
+    if (clears.length) list = list.filter((m) => !clears.some((c) => c.roomId === m.roomId && m.createdAt <= c.at));
+    return { messages: list.map(outMsg) };
   });
 
   on('room:stats', {}, async ({ roomId }) => {
@@ -1214,5 +1339,6 @@ io.on('connection', (socket) => {
 });
 
 await store.startDb();
+setTimeout(housekeeping, 5000).unref();
 arduino.available().then((ok) => { if (ok) arduinoLibs.sync().then((done) => { if (done.length) console.log('[arduino] 라이브러리 다시 설치:', done.join(', ')); }); });
 server.listen(config.port, () => console.log(`[server] http://localhost:${config.port}`));

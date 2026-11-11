@@ -524,7 +524,7 @@ function start(session) {
           .sort((a, b) => (b.lastMessageAt || 0) - (a.lastMessageAt || 0)).slice(0, full ? 6 : 10);
         if (match.length) groups.push(['방', match.map(roomItem)]);
         if (!onPickRoom) {
-          const people = [...data.users.values()].filter((u) => u.id !== data.me.id && (u.nickname || '').toLowerCase().includes(q)).slice(0, 6);
+          const people = data.activeUsers().filter((u) => u.id !== data.me.id && (u.nickname || '').toLowerCase().includes(q)).slice(0, 6);
           if (people.length) {
             groups.push(['사람', people.map((u) => ({
               key: `u:${u.id}`,
@@ -632,6 +632,15 @@ function start(session) {
   }
 
   data.on('error', (e) => toast(e.message, 'error'));
+  // 오래 접속하지 않아 서버에서 게스트 계정이 삭제됨 → 새로 입장
+  data.on('accountDeleted', onAccountDeleted);
+  function onAccountDeleted() {
+    if (onAccountDeleted.done) return;
+    onAccountDeleted.done = true;
+    document.querySelectorAll('.modal-backdrop').forEach((x) => x.remove());
+    clearSession();
+    boot('게스트 계정이 오랫동안 사용되지 않았거나 다른 사용자가 정리해서 삭제되었습니다. 새로 입장해 주세요. (이 기기에 저장된 대화 사본은 남아 있습니다)');
+  }
   data.init(session, saveSession).then(() => {
     if (!data.nodes.size) showEmpty();
     updateBadges();

@@ -159,6 +159,30 @@ try {
     await a.waitForSelector('.members-dock:not([hidden])', { timeout: 3000 });
     await shot(a, 'dock');
   });
+  await step('DM: delete for me only (partner still sees it), guest cleanup', async () => {
+    await b.click('.tree-row.dm');
+    await b.waitForSelector('.chat-view .msg:has-text("밥, 비밀 이야기")', { timeout: 5000 });
+    await b.click('.chat-view .msg:has-text("밥, 비밀 이야기")', { button: 'right' });
+    await b.click('.menu-item:has-text("나에게서만 삭제")');
+    await b.click('.modal button:has-text("나에게서만 삭제")');
+    await b.waitForSelector('.chat-view .msg:has-text("밥, 비밀 이야기")', { state: 'detached', timeout: 5000 });
+    await a.click('.tree-row.dm');
+    await a.waitForSelector('.chat-view:not(.split-pane) .msg:has-text("밥, 비밀 이야기")', { timeout: 5000 });
+    // 접속하지 않은 게스트 정리 → 멤버 목록에서 사라지고, 프로필은 '삭제된 계정'
+    const g = await login('guest', 'e2eGuest01', '지나간 손님');
+    await a.reload();
+    await a.waitForSelector('.members-dock .member:has-text("지나간 손님")', { timeout: 8000 });
+    await a.click('.members-dock button:has-text("접속하지 않은 게스트 정리")');
+    await a.waitForSelector('.guest-cleanup .guest-row:has-text("지나간 손님")');
+    await a.check('.guest-cleanup .guest-row:has-text("지나간 손님") input');
+    await shot(a, 'guest-cleanup');
+    await a.click('.guest-cleanup button:has-text("선택한 계정 삭제")');
+    await a.waitForSelector('.members-dock .member:has-text("지나간 손님")', { state: 'detached', timeout: 5000 });
+    const st = await fetch(`${base}/api/status`, { headers: { Authorization: `Bearer ${g.token}` } });
+    if (st.status !== 410) throw new Error(`deleted guest still accepted: ${st.status}`);
+    await a.click('.tree-row.text'); // 다음 단계들이 기대하는 화면으로 되돌림
+    await a.waitForSelector('.chat-view:not(.split-pane) .room-title h2:has-text("일반")', { timeout: 5000 });
+  });
   await step('unread bar on reopen', async () => {
     await b.click('.tree-row.dm');
     await b.click('.tree-row.text');

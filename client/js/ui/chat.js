@@ -418,6 +418,7 @@ export function createChatView(ctx, { split = false } = {}) {
         toast(`${n}개 메시지를 저장했습니다.`);
         stopSelect();
       }),
+      room?.type === 'dm' && data.isOnline ? btn('trash', '나에게서만 삭제', () => hideForMe(chosen.filter(hideable))) : null,
       btn('trash', deletable.length !== chosen.length ? `삭제 (${deletable.length})` : '삭제', () => removeMany(deletable), { danger: true, disabled: !deletable.length }),
       h('button', { class: 'btn small ghost', type: 'button', onclick: stopSelect }, '취소'),
     );
@@ -463,6 +464,24 @@ export function createChatView(ctx, { split = false } = {}) {
     if (!ok) return;
     stopSelect();
     scheduleDelete(list);
+  }
+
+  // ───────── 1:1 대화: 나에게서만 삭제 ─────────
+  // 상대 화면과 서버에는 그대로 남음 (두 사람이 모두 지우면 서버에서도 삭제)
+  const hideable = (m) => data.nodes.get(m.roomId)?.type === 'dm' && !m.pending && !m.failed && data.isOnline;
+  async function hideForMe(list) {
+    if (!list.length) return;
+    const ok = await confirmDialog({
+      title: '나에게서만 삭제',
+      message: `${list.length === 1 ? '이 메시지를' : `메시지 ${list.length}개를`} 내 화면에서만 지울까요?\n${data.dmPartner(data.nodes.get(list[0].roomId)).nickname}님에게는 그대로 보입니다.`,
+      confirmText: '나에게서만 삭제',
+    });
+    if (!ok) return;
+    if (st.selecting) stopSelect();
+    try {
+      const n = await data.hideMessages(list.map((m) => m.id));
+      toast(n === 1 ? '메시지를 내 화면에서 지웠습니다.' : `메시지 ${n}개를 내 화면에서 지웠습니다.`);
+    } catch (e) { toast(errorText(e), 'error'); }
   }
 
   // ───────── 사용자별 메시지 필터 ─────────
@@ -575,8 +594,9 @@ export function createChatView(ctx, { split = false } = {}) {
       data.can('editWorkspace') && sent ? { label: '보드에 카드로 추가', icon: 'grid', onClick: () => convertDialog(ctx, { roomId: m.roomId, messages: [m] }) } : null,
       data.can('editWorkspace') && codeIn(m) ? { label: '코드 작업실에 파일로 저장', icon: 'code', onClick: () => saveCodeDialog(ctx, codeIn(m)) } : null,
       { label: '여러 개 선택', icon: 'check', onClick: () => startSelect(m.id) },
-      mine || canDeleteOthers() ? 'sep' : null,
-      mine || canDeleteOthers() ? { label: '삭제', icon: 'trash', danger: true, onClick: () => remove(m) } : null,
+      mine || canDeleteOthers() || hideable(m) ? 'sep' : null,
+      hideable(m) ? { label: '나에게서만 삭제', icon: 'trash', onClick: () => hideForMe([m]) } : null,
+      mine || canDeleteOthers() ? { label: mine && hideable(m) ? '모두에게서 삭제' : '삭제', icon: 'trash', danger: true, onClick: () => remove(m) } : null,
     ];
     const menu = openMenu(anchor || els.get(m.id) || el, items, { header });
     function closeAll() { menu.close(); }
@@ -781,7 +801,7 @@ export function createChatView(ctx, { split = false } = {}) {
 
   data.on('message', (m, info) => upsert(m, info || {}));
   data.on('messageRemoved', removeMsg);
-  data.on('users', debounce(() => { if (st.roomId) { renderTitle(); renderAll({ preserve: true }); } }, 300));
+  data.on('users', debounce(() => { if (st.roomId) { renderTitle(); renderAll({ preserve: true }); renderComposerState(); } }, 300));
   data.on('nodes', () => { if (st.roomId) { renderTitle(); renderComposerState(); } });
   data.on('presence', () => { if (data.nodes.get(st.roomId)?.type === 'dm') renderTitle(); });
   data.on('resync', () => { if (st.roomId) reload(); });
@@ -1067,7 +1087,7 @@ export function createChatView(ctx, { split = false } = {}) {
       }
       if (r?.dm) {
         const name = r.dm.name.toLowerCase();
-        const u = [...data.users.values()].find((x) => x.id !== data.me.id && x.nickname?.toLowerCase() === name) || [...data.users.values()].find((x) => x.id !== data.me.id && x.nickname?.toLowerCase().includes(name));
+        const u = data.activeUsers().find((x) => x.id !== data.me.id && x.nickname?.toLowerCase() === name) || data.activeUsers().find((x) => x.id !== data.me.id && x.nickname?.toLowerCase().includes(name));
         if (!u) return toast(`'${r.dm.name}' 사용자를 찾을 수 없습니다.`, 'warn');
         clearComposer();
         try {
@@ -1233,7 +1253,7 @@ export function createChatView(ctx, { split = false } = {}) {
     let m = before.match(/(^|\s)@([^\s@]{0,32})$/);
     if (m) {
       const q = m[2].toLowerCase();
-      const items = [...data.users.values()].filter((u) => u.nickname?.toLowerCase().includes(q) && !blocked.has(u.id)).slice(0, 6)
+      const items = data.activeUsers().filter((u) => u.nickname?.toLowerCase().includes(q) && !blocked.has(u.id)).slice(0, 6)
         .map((u) => ({ key: u.id, view: [avatar(u, 22, { presence: data.presenceOf(u.id) }), h('span', {}, u.nickname), badge(u.provider)], insert: `@${u.nickname} ` }));
       ['everyone', 'here'].filter((x) => x.startsWith(q) && q).forEach((x) => items.push({ key: x, view: [h('strong', {}, `@${x}`), h('span', { class: 'muted small' }, '모두에게 알림')], insert: `@${x} ` }));
       return showSuggest('멤버', items, pos - m[2].length - 1, pos);
@@ -1371,10 +1391,12 @@ export function createChatView(ctx, { split = false } = {}) {
   function renderComposerState() {
     const room = data.nodes.get(st.roomId);
     const readonly = room?.readonly && !data.can('manageNodes');
-    const allowed = data.can('sendMessage') && !!room && !readonly;
+    const gone = room?.type === 'dm' && data.dmPartner(room).deleted;
+    const allowed = data.can('sendMessage') && !!room && !readonly && !gone;
     ta.disabled = !allowed;
     const target = room?.type === 'dm' ? `@${data.dmPartner(room).nickname}` : `#${room?.name || ''}`;
-    ta.placeholder = readonly ? '📢 공지 채널입니다. 로그인한 사용자만 글을 쓸 수 있어요.' : allowed ? `${target}에 메시지 보내기` : '메시지를 보낼 수 없습니다';
+    const purge = gone && data.dmPartner(room).purgeAt ? ` · ${fmtFull(data.dmPartner(room).purgeAt)}에 이 대화는 서버에서 지워집니다` : '';
+    ta.placeholder = gone ? `삭제된 계정입니다. 메시지를 보낼 수 없습니다${purge}` : readonly ? '📢 공지 채널입니다. 로그인한 사용자만 글을 쓸 수 있어요.' : allowed ? `${target}에 메시지 보내기` : '메시지를 보낼 수 없습니다';
     composer.classList.toggle('disabled', !allowed);
     plusBtn.disabled = !allowed;
     sendBtn.disabled = !allowed || st.slowUntil > Date.now();

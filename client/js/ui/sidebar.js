@@ -2,7 +2,7 @@ import { config } from '../config.js';
 import { h, toast, isTouch } from '../util.js';
 import { icon } from './icons.js';
 import {
-  avatar, badge, openMenu, openModal, PRESENCE_LABEL,
+  avatar, badge, openMenu, openModal, PRESENCE_LABEL, confirmDialog,
 } from './common.js';
 import {
   createNodeDialog, editNodeDialog, moveNodeDialog, deleteNodeDialog, profileDialog, settingsDialog, roomInfoDialog, exportDialog, editProfileDialog,
@@ -85,6 +85,13 @@ export function createSidebar(ctx) {
       const chat = ['text', 'dm', 'code', 'board'].includes(node.type);
       items.push(
         node.type === 'dm' ? { label: '상대 프로필', icon: 'user', onClick: () => profileDialog(ctx, data.dmPartner(node).id) } : null,
+        node.type === 'dm' && data.isOnline ? {
+          label: '대화 내용 지우기 (나에게서만)', icon: 'trash', onClick: async () => {
+            const ok = await confirmDialog({ title: '대화 내용 지우기', message: `${data.dmPartner(node).nickname}님과 나눈 지금까지의 대화를 나에게서만 지울까요?\n상대에게는 그대로 남아 있습니다. 두 사람이 모두 지운 부분은 서버에서도 삭제됩니다.`, confirmText: '지우기', danger: true });
+            if (!ok) return;
+            try { await data.clearDm(node.id); toast('대화 내용을 지웠습니다.'); } catch (e) { toast(errorText(e), 'error'); }
+          },
+        } : null,
         { label: favorites.has(node.id) ? '즐겨찾기 해제' : '즐겨찾기에 추가', icon: 'star', onClick: () => { const on = favorites.toggle(node.id); toast(on ? '⭐ 즐겨찾기에 추가했습니다.' : '즐겨찾기에서 뺐습니다.'); } },
         { label: archived.has(node.id) ? '보관 해제 (목록에 다시 표시)' : '보관하기 (목록에서 숨김)', icon: 'archive', onClick: () => { const on = archived.toggle(node.id); toast(on ? '🗄 보관했습니다. 사이드바 아래 "보관한 방"에서 볼 수 있어요.' : '보관을 해제했습니다.'); } },
         chat && !ctx.isSplitOpen?.(node.id) ? { label: '분할 화면으로 열기', icon: 'columns', onClick: () => ctx.openSplit(node.id) } : null,
@@ -302,7 +309,7 @@ export function createSidebar(ctx) {
     let modal = null;
     const renderList = () => {
       const s = q.value.trim().toLowerCase();
-      const users = [...data.users.values()].filter((u) => u.id !== data.me.id && (u.nickname || '').toLowerCase().includes(s))
+      const users = data.activeUsers().filter((u) => u.id !== data.me.id && (u.nickname || '').toLowerCase().includes(s))
         .sort((a, b) => (data.presenceOf(a.id) === 'offline') - (data.presenceOf(b.id) === 'offline') || (a.nickname || '').localeCompare(b.nickname || '', 'ko')).slice(0, 30);
       results.replaceChildren(...users.map((u) => h('button', {
         class: 'qs-item', type: 'button',
