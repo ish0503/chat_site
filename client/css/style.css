@@ -71,6 +71,11 @@ body {
 /* 높이는 실제로 보이는 영역(--app-h, 키보드가 올라오면 줄어듦)에 맞춤. iPhone 홈 화면 앱에서 화면이 위로 밀리는 것을 막기 위해 페이지 자체는 고정 */
 html.touch, html.touch body { position: fixed; inset: 0; width: 100%; overflow: hidden; }
 #app { height: 100%; height: var(--app-h, 100%); }
+/* 키보드가 오르내릴 때 화면이 뚝 끊기지 않고 키보드 속도에 맞춰 부드럽게 따라감 */
+html.touch #app, html.touch .layout { transition: height 0.24s cubic-bezier(0.25, 0.85, 0.3, 1); }
+html.touch .composer, html.touch .select-bar { transition: padding-bottom 0.24s cubic-bezier(0.25, 0.85, 0.3, 1); }
+html.touch .modal-backdrop, html.touch .sheet-backdrop { bottom: auto; height: var(--app-h, 100%); }
+html.touch .modal { max-height: calc(var(--app-h, 100dvh) - 16px); }
 button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
 button:disabled { cursor: not-allowed; opacity: 0.5; }
 input, textarea, select { font: inherit; color: inherit; }
@@ -1178,7 +1183,78 @@ svg.links path { fill: none; stroke-width: 2; }
 .convert-row:hover { background: var(--hover); }
 .convert-row input { flex: none; width: 16px; height: 16px; }
 
+/* ── 아두이노 창 (회로 연결 + 시리얼 모니터) ── */
+.ide-home-actions { margin-left: auto; display: flex; gap: 8px; }
+.ide-home-head .ide-home-actions .btn { margin-left: 0; }
+.ide-ardu { flex: 0 0 46%; min-width: 340px; max-width: 60%; display: flex; min-height: 0; border-left: 1px solid var(--bg-0); }
+.ide-ardu[hidden] { display: none; }
+.ide-ardu-toggle { display: none; }
+.ardu { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--bg-1); }
+.ardu-circuit { flex: 3 1 0; min-height: 160px; display: flex; flex-direction: column; }
+.ardu-bar { flex: none; display: flex; align-items: center; gap: 6px; padding: 4px 8px; min-height: 40px; border-bottom: 1px solid var(--bg-0); }
+.ardu-title { font-size: 13px; white-space: nowrap; }
+.ardu-bar .input, .ardu-send .input { min-height: 30px; height: 30px; padding: 0 8px; font-size: 13px; width: auto; }
+.ardu-board { max-width: 150px; }
+.ardu-canvas { flex: 1; min-height: 0; position: relative; overflow: hidden; background-color: var(--bg-0); background-image: radial-gradient(var(--border) 1px, transparent 1px); background-size: 16px 16px; }
+:root[data-theme="light"] .ardu-canvas { background-color: #eef0f3; }
+.ardu-svg { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; user-select: none; -webkit-user-select: none; cursor: grab; outline: none; }
+.ardu-svg:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
+.ardu-svg * { pointer-events: none; }
+.ardu-svg text { font-family: var(--font); }
+.ardu-pin-label { font: 5.4px var(--mono); fill: rgba(255, 255, 255, 0.9); }
+.ardu-board-name { font-size: 9px; font-weight: 700; letter-spacing: 1.2px; fill: rgba(255, 255, 255, 0.5); }
+.ardu-bb-label { font: 5px var(--mono); fill: #8a836f; }
+.ardu-val { font-size: 6px; fill: var(--text); }
+.ardu-val.light { fill: #fff; }
+.ardu-mark { font-size: 7px; fill: var(--muted); }
+.ardu-mod-title { font-size: 7px; font-weight: 700; fill: #fff; }
+.ardu-lcd { font: 7.6px var(--mono); fill: #1b2b05; }
+.ardu-leg { stroke: #a3a9b0; stroke-width: 1.6; stroke-linecap: round; fill: none; }
+.ardu-term { fill: #d5d9de; stroke: #4b4f55; stroke-width: 0.5; }
+.ardu-wire { fill: none; stroke-width: 2.6; stroke-linecap: round; }
+.ardu-wire-edge { fill: none; stroke: rgba(0, 0, 0, 0.5); stroke-width: 3.8; stroke-linecap: round; }
+.ardu-wire-sel { fill: none; stroke: var(--accent); stroke-width: 8; stroke-linecap: round; opacity: 0.55; }
+.ardu-wire.ghost { stroke-dasharray: 4 3; opacity: 0.85; }
+.ardu-pick { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.4; }
+.ardu-svg g.sel > .ardu-body { stroke: var(--accent); stroke-width: 1.8; }
+.ardu-ring { animation: ardu-ring 0.5s ease-out infinite; transform-box: fill-box; transform-origin: center; }
+@keyframes ardu-ring { from { opacity: 0.9; transform: scale(0.8); } to { opacity: 0; transform: scale(1.3); } }
+.ardu-tip { position: absolute; z-index: 2; pointer-events: none; background: var(--bg-float); color: var(--text-strong); font-size: 12px; padding: 2px 8px; border-radius: 6px; box-shadow: var(--shadow); white-space: nowrap; }
+.ardu-tip[hidden] { display: none; }
+.ardu-warn { flex: none; max-height: 96px; overflow-y: auto; padding: 6px 10px; background: var(--warn-soft); font-size: 12.5px; color: var(--text-strong); display: flex; flex-direction: column; gap: 4px; }
+.ardu-warn[hidden], .ardu-inspect[hidden] { display: none; }
+.ardu-warn > div { display: flex; gap: 6px; align-items: flex-start; }
+.ardu-warn .icon { color: var(--warn); flex: none; margin-top: 2px; }
+.ardu-inspect { position: absolute; z-index: 3; left: 8px; bottom: 8px; width: min(360px, calc(100% - 16px)); max-height: min(62%, 280px); overflow-y: auto; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow); background: color-mix(in srgb, var(--bg-2) 94%, transparent); display: flex; flex-direction: column; gap: 6px; }
+.ardu-inspect.top { bottom: auto; top: 8px; }
+.ardu-ins-head { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.ardu-ins-head strong { flex: 1; min-width: 0; }
+.ardu-row { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.ardu-row > span:first-child { width: 84px; flex: none; color: var(--muted); }
+.ardu-row input[type="range"] { flex: 1; min-width: 60px; accent-color: var(--accent); }
+.ardu-row .input { min-height: 30px; height: 30px; padding: 0 8px; font-size: 13px; }
+.ardu-row select.input { flex: 1; }
+.ardu-num { width: 86px; flex: none; }
+.ardu-unit { width: 34px; flex: none; }
+.ardu-desc { margin: 2px 0 0; line-height: 1.45; }
+.ardu-swatches { display: flex; gap: 4px; }
+.ardu-swatch { width: 20px; height: 20px; border-radius: 50%; border: 2px solid var(--bg-4); }
+.ardu-swatch.active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.ardu-serial { flex: 2 1 0; min-height: 120px; display: flex; flex-direction: column; border-top: 1px solid var(--bg-0); background: var(--bg-0); }
+.ardu-log { flex: 1; min-height: 0; overflow: auto; padding: 8px 12px; font-family: var(--mono); font-size: 12.5px; white-space: pre-wrap; word-break: break-word; color: var(--text); user-select: text; }
+.ardu-log .run-line.clickable { cursor: pointer; text-decoration: underline dotted; }
+.ardu-send { flex: none; display: flex; gap: 6px; padding: 6px 8px; border-top: 1px solid var(--border); }
+.ardu-send-input { flex: 1; min-width: 0; font-family: var(--mono); }
+.menu-head { padding: 6px 12px; }
+
 @media (max-width: 768px) {
+  .has-ardu .ide-ardu-toggle { display: inline-flex; }
+  .ide-ardu { display: none; position: absolute; inset: 0; z-index: 5; max-width: none; min-width: 0; border-left: 0; }
+  .ardu-front .ide-ardu:not([hidden]) { display: flex; }
+  .ardu-title { display: none; }
+  .ardu-send-input, .ardu-row .input, .ardu-bar .input, .ardu-send .input { font-size: 16px; } /* iOS 확대 방지 */
+  .ardu-row > span:first-child { width: 68px; }
+  .ide-home-head { flex-wrap: wrap; }
   .ide-side { position: absolute; left: 0; top: 0; bottom: 0; z-index: 6; width: min(80vw, 280px); box-shadow: var(--shadow); }
   .ide-status { display: none; }
   .ide-bar .btn.primary { padding: 0 10px; }

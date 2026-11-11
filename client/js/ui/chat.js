@@ -94,7 +94,8 @@ export function createChatView(ctx, { split = false } = {}) {
   const slowBar = h('div', { class: 'composer-bar slow', hidden: true });
   const counter = h('span', { class: 'char-count', hidden: true });
   const suggestBox = h('div', { class: 'mention-box', hidden: true, role: 'listbox' });
-  const sendBtn = h('button', { class: 'icon-btn send-btn', title: '보내기', 'aria-label': '보내기', onclick: () => send() }, icon('send'));
+  // 보내기 버튼을 눌러도 입력창의 포커스를 유지 (모바일에서 키보드가 내려갔다 다시 올라오며 화면이 흔들리지 않게)
+  const sendBtn = h('button', { class: 'icon-btn send-btn', title: '보내기', 'aria-label': '보내기', onmousedown: (e) => e.preventDefault(), onclick: () => send() }, icon('send'));
   const micBtn = SpeechRec ? h('button', { class: 'icon-btn', title: '음성으로 입력', 'aria-label': '음성으로 입력', onclick: () => toggleDictation() }, icon('mic')) : null;
   const plusBtn = h('button', { class: 'icon-btn', title: '첨부 · 투표 · 음성 메시지', 'aria-label': '첨부 메뉴', onclick: (e) => plusMenu(e.currentTarget) }, icon('plus'));
   const box = h('div', { class: 'composer-box' },

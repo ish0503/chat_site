@@ -16,29 +16,74 @@
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="stylesheet" href="css/style.css">
   <script>
-    // 화면 높이 맞추기 (iPhone 홈 화면 앱 · 모바일): 키보드가 올라오면 보이는 영역만큼만 쓰고, 페이지가 위로 밀려 올라간 채 남지 않게 함
+    // 화면 높이 맞추기 (iPhone 홈 화면 앱 · 모바일): 키보드가 올라오면 보이는 영역만큼만 쓰고, 페이지가 위로 밀려 올라간 채 남지 않게 함.
+    // 키보드는 "다 올라온 뒤"에야 높이를 알려 주므로, 지난번 키보드 높이를 기억해 두었다가 입력창을 누르는 순간 미리 맞춰서
+    // 화면이 통째로 밀렸다가 되돌아오거나 여러 번 덜컹거리지 않고 키보드와 함께 한 번에 움직이게 함.
     (function () {
       var touch = window.matchMedia && matchMedia('(pointer: coarse)').matches;
       var vv = window.visualViewport;
       var root = document.documentElement;
       if (!touch) return;
       root.classList.add('touch');
-      var base = 0;
-      function fit() {
-        var h = vv ? vv.height : window.innerHeight;
-        if (h > base || !base) base = h; // 키보드가 없을 때의 높이
-        if (Math.abs(window.orientation || 0) !== fit.o) { fit.o = Math.abs(window.orientation || 0); base = h; }
-        root.style.setProperty('--app-h', Math.round(h) + 'px');
-        root.classList.toggle('kb-open', base - h > 120);
-        if (window.scrollY || root.scrollTop || (document.body && document.body.scrollTop)) window.scrollTo(0, 0);
+      var base = 0;        // 키보드가 없을 때의 높이
+      var applied = 0;     // 지금 화면에 적용한 높이
+      var open = false;    // 키보드가 올라와 있는지
+      var guessUntil = 0;  // 이 시각까지는 미리 맞춘 값을 유지 (키보드가 움직이는 중)
+      var guessOpen = false;
+      var raf = 0;
+      var lastAngle = null;
+      var noGuess = false; // 화면 키보드가 뜨지 않는 기기(외장 키보드)면 미리 맞추지 않음
+      function angle() { var o = screen.orientation; return o && typeof o.angle === 'number' ? o.angle : (window.orientation || 0); }
+      function key() { return 'cs.kbh.' + (Math.abs(angle()) % 180 ? 'l' : 'p'); }
+      function recall() { try { return Number(localStorage.getItem(key())) || 0; } catch (e) { return 0; } }
+      function remember(k) { try { localStorage.setItem(key(), String(Math.round(k))); } catch (e) { /* noop */ } }
+      function apply(h, isOpen) {
+        h = Math.round(h);
+        if (h !== applied) { applied = h; root.style.setProperty('--app-h', h + 'px'); }
+        if (isOpen !== open) { open = isOpen; root.classList.toggle('kb-open', isOpen); }
       }
+      function measure() {
+        raf = 0;
+        var scale = (vv && vv.scale) || 1;
+        var h = vv ? vv.height * scale : window.innerHeight; // 두 손가락 확대 중에는 높이가 줄어든 것으로 보지 않음
+        var a = angle();
+        if (a !== lastAngle) { lastAngle = a; base = 0; guessUntil = 0; }
+        if (!base || h > base) base = h;
+        var isOpen = base - h > 120;
+        var now = Date.now();
+        if (now < guessUntil && isOpen !== guessOpen) {
+          // 키보드가 아직 올라오는(내려가는) 중: 미리 맞춘 높이를 그대로 둠
+        } else {
+          if (guessUntil && now >= guessUntil && guessOpen && !isOpen) noGuess = true;
+          guessUntil = 0;
+          apply(h, isOpen);
+          if (isOpen) remember(base - h);
+        }
+        if (scale < 1.02 && (window.scrollY || root.scrollTop || (document.body && document.body.scrollTop))) window.scrollTo(0, 0);
+      }
+      function fit() { if (!raf) raf = requestAnimationFrame(measure); }
+      function later() { setTimeout(fit, 120); setTimeout(fit, 380); setTimeout(fit, 720); }
+      function typable(el) {
+        if (!el || el.readOnly || el.disabled) return false;
+        if (el.isContentEditable || el.tagName === 'TEXTAREA') return true;
+        return el.tagName === 'INPUT' && /^(text|search|email|url|tel|password|number|)$/i.test(el.getAttribute('type') || '');
+      }
+      function guess(isOpen, h) { guessOpen = isOpen; guessUntil = Date.now() + 650; apply(h, isOpen); }
       if (vv) { vv.addEventListener('resize', fit); vv.addEventListener('scroll', fit); }
       window.addEventListener('resize', fit);
-      window.addEventListener('orientationchange', function () { base = 0; setTimeout(fit, 300); });
-      document.addEventListener('focusout', function () { setTimeout(fit, 80); setTimeout(fit, 400); });
-      document.addEventListener('focusin', function () { setTimeout(fit, 80); setTimeout(fit, 400); });
+      window.addEventListener('orientationchange', function () { base = 0; guessUntil = 0; setTimeout(fit, 300); });
+      document.addEventListener('focusin', function (e) {
+        var k = recall();
+        if (!open && !noGuess && base && k > 120 && k < base * 0.7 && typable(e.target)) guess(true, base - k);
+        later();
+      });
+      document.addEventListener('focusout', function () {
+        // 다른 입력창으로 옮겨 간 것이 아니면 키보드가 내려가는 것 → 바로 원래 높이로
+        setTimeout(function () { if (open && base && !typable(document.activeElement)) guess(false, base); }, 40);
+        later();
+      });
       window.addEventListener('pageshow', fit);
-      fit();
+      measure();
     })();
     // 시작 감시: 앱이 10초 안에 뜨지 않거나 파일을 불러오지 못하면, 무한 로딩 대신 원인과 복구 버튼을 보여줍니다.
     (function () {
