@@ -158,6 +158,46 @@ test('회로: 저항 없는 LED 는 과전류 경고, 거꾸로 꽂으면 안 �
   assert.equal(short.short, true);
 });
 
+test('실제처럼: 합선이면 보드가 꺼지고, 과전류 LED 는 타며, 연결이 빠지면 부품이 멈춤', async () => {
+  // 합선: 스케치가 아예 돌지 않음
+  const shorted = await simulate('void setup() { Serial.begin(115200); Serial.println("run"); }\nvoid loop() { delay(20); }', wired([], [['5V', 'GND']]));
+  assert.equal(shorted.serial, '');
+  assert.match(shorted.errors[0].message, /합선/);
+  // 저항 없는 LED 는 1.5초 뒤 타서 꺼짐
+  const burn = await simulate('void setup() { pinMode(8, OUTPUT); digitalWrite(8, HIGH); }\nvoid loop() { delay(50); }', wired([{ id: 'l', type: 'led' }], [['D8', 'l:A'], ['l:K', 'GND']]), { ms: 1900 });
+  assert.deepEqual(burn.state.parts.l, { i: 0, x: 1 });
+  assert.match(burn.state.warn.join(), /타 버렸/);
+  // 로드셀: 연결이 없으면 값을 지어내지 않고 실제 라이브러리처럼 그 자리에서 기다림
+  const hx = await simulate('#include <HX711.h>\nHX711 s;\nvoid setup() { Serial.begin(115200); s.begin(3, 2); Serial.println("a"); s.tare(); Serial.println("b"); }\nvoid loop() { delay(20); }', wired([{ id: 'h', type: 'hx711' }], [['h:VCC', '5V'], ['h:GND', 'GND'], ['h:DT', 'D3']]));
+  assert.equal(hx.serial, 'a\n');
+  assert.match(hx.hints.join(), /기다리고/);
+  // 5V 가 필요한 부품은 3.3V 로 동작하지 않음
+  const lcdSketch = '#include <LiquidCrystal_I2C.h>\nLiquidCrystal_I2C lcd(0x27, 16, 2);\nvoid setup() { lcd.init(); }\nvoid loop() { lcd.setCursor(0, 0); lcd.print("hi"); delay(30); }';
+  const lcdAt = (vcc, extra = []) => wired([{ id: 'l', type: 'lcd' }], [['l:VCC', vcc], ['l:GND', 'GND'], ['l:SDA', 'A4'], ['l:SCL', 'A5'], ...extra]);
+  const low = await simulate(lcdSketch, lcdAt('3V3'));
+  assert.equal(low.state.parts.l, undefined);
+  assert.match(low.hints.join(), /5V 전원이 필요/);
+  // 실행 중에 전원선을 빼면 LCD 가 꺼짐
+  const unplug = await simulate(lcdSketch, lcdAt('5V'), { ms: 300, during: async (rt, out) => {
+    await new Promise((x) => { setTimeout(x, 120); });
+    out.before = rt.snapshot().parts.l;
+    const c = lcdAt('5V'); c.wires = c.wires.filter((w) => w.b !== 'mcu:5V');
+    rt.setNet(buildNetlist(c));
+  } });
+  assert.equal(unplug.before.l[0].trimEnd(), 'hi');
+  assert.equal(unplug.state.parts.l, undefined);
+  // 신호선만 틀리면 백라이트는 켜지지만 글자는 없음
+  const c = lcdAt('5V'); c.wires = c.wires.filter((w) => w.b !== 'mcu:A4');
+  const noSda = await simulate(lcdSketch, c);
+  assert.deepEqual(noSda.state.parts.l, { l: [], b: 1 });
+  // GPS: 통신 속도가 다르면 위치를 읽지 못함
+  const gps = await simulate(`#include <SoftwareSerial.h>\n#include <TinyGPS++.h>\nSoftwareSerial ss(4, 3);\nTinyGPSPlus gps;
+    void setup() { Serial.begin(115200); ss.begin(4800); }
+    void loop() { while (ss.available()) gps.encode(ss.read()); if (millis() > 1150) { Serial.println(gps.location.isValid() ? "fix" : "none"); delay(5000); } }`,
+  wired([{ id: 'g', type: 'gps' }], [['g:VCC', '5V'], ['g:GND', 'GND'], ['g:TX', 'D4']]), { ms: 1300 });
+  assert.equal(gps.serial.trim(), 'none');
+});
+
 test('회로: 버튼(INPUT_PULLUP) · 떠 있는 핀 · 가변저항 분압 · PWM', async () => {
   const circuit = wired(
     [{ id: 'btn', type: 'button' }, { id: 'pot', type: 'pot', props: { pos: 0.25 } }, { id: 'l', type: 'led' }, { id: 'r', type: 'resistor', props: { ohm: 220 } }],

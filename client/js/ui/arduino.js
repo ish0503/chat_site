@@ -172,11 +172,13 @@ export function createArduinoPane(host) {
       const color = LED_COLORS[p.color] || LED_COLORS.red;
       const mA = live?.i || 0;
       const glow = Math.min(1, mA / 12);
+      const dead = !!live?.x; // 과전류로 탐
       g.append(leg(0, -12), leg(PITCH, -12),
         glow > 0.02 ? s('circle', { cx: 5, cy: -20, r: 9 + glow * 9, fill: color, opacity: 0.15 + glow * 0.3, class: 'ardu-glow' }) : null,
-        s('path', { d: 'M-2 -12V-20a7 7 0 0 1 14 0V-12z', fill: color, 'fill-opacity': 0.3 + glow * 0.7, stroke: mA > 30 ? '#ff1744' : 'rgba(0,0,0,.45)', 'stroke-width': mA > 30 ? 1.6 : 0.6, class: 'ardu-body' }),
+        s('path', { d: 'M-2 -12V-20a7 7 0 0 1 14 0V-12z', fill: dead ? '#3a3a3a' : color, 'fill-opacity': dead ? 0.9 : 0.3 + glow * 0.7, stroke: mA > 30 ? '#ff1744' : 'rgba(0,0,0,.45)', 'stroke-width': mA > 30 ? 1.6 : 0.6, class: 'ardu-body' }),
         s('text', { x: -4, y: -3, class: 'ardu-mark' }, '+'));
-      if (mA > 0.05) g.append(s('text', { x: 5, y: -31, class: 'ardu-val', 'text-anchor': 'middle' }, `${mA.toFixed(1)}mA`));
+      if (dead) g.append(s('path', { d: 'M1 -23l8 8M9 -23l-8 8', stroke: '#ff5252', 'stroke-width': 1.6, 'stroke-linecap': 'round' }), s('text', { x: 5, y: -31, class: 'ardu-val', 'text-anchor': 'middle' }, '탐'));
+      else if (mA > 0.05) g.append(s('text', { x: 5, y: -31, class: 'ardu-val', 'text-anchor': 'middle' }, `${mA.toFixed(1)}mA`));
     } else if (part.type === 'resistor') {
       const ohm = Number(p.ohm) || 220;
       const exp = Math.floor(Math.log10(ohm)) - 1;
