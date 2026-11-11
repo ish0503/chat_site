@@ -9,6 +9,8 @@ const INPUT = 0; const OUTPUT = 1; const INPUT_PULLUP = 2;
 const PWM_PINS = new Set([3, 5, 6, 9, 10, 11]);
 const LED_VF = { red: 1.8, yellow: 2.0, green: 2.1, blue: 3.0, white: 3.0 };
 const LED_RS = 12; // 켜진 LED 의 내부 저항(Ω)
+const LED_BURN_MA = 45; // 이보다 큰 전류가 계속 흐르면 LED 가 탐
+const NEEDS_5V = new Set(['hcsr04', 'servo', 'lcd']); // 3.3V 로는 동작하지 않는 부품
 const sleep = (ms) => new Promise((r) => { setTimeout(r, ms); });
 const pinName = (n) => (n < 14 ? `D${n}` : `A${n - 14}`);
 const pinLabel = (n) => (n < 14 ? `D${n}` : `A${n - 14}`);
@@ -169,6 +171,10 @@ export function createRuntime({ post }) {
   let V = new Float64Array(0);
   let floating = [];
   let leds = new Map();
+  const overSince = new Map(); // LED id → 과전류가 시작된 시각
+  const burnt = new Set();
+  const servoObjs = [];
+  const lcdObjs = [];
   let dirty = true;
   let changed = true;
   let stopped = false;
@@ -213,7 +219,7 @@ export function createRuntime({ post }) {
         case 'pot': { const R = Number(pr.ohm) || 10000; const x = clamp(Number(pr.pos) || 0, 0, 1); edge('1', 'W', R * x + 1); edge('W', '2', R * (1 - x) + 1); break; }
         case 'ldr': { const x = clamp(Number(pr.light) || 0, 0, 100) / 100; edge('A', 'B', 200000 * (0.0025 ** x)); break; } // 어두움 200kΩ → 밝음 500Ω
         case 'buzzer': edge('+', '-', 250); break;
-        case 'led': if (P.A !== undefined && P.K !== undefined && P.A !== P.K) ledParts.push(part); break;
+        case 'led': if (P.A !== undefined && P.K !== undefined && P.A !== P.K && !burnt.has(part.id)) ledParts.push(part); break;
         default: if (P.VCC !== undefined && P.GND !== undefined) edge('VCC', 'GND', 5000); // 모듈이 쓰는 약한 전류
       }
     }
@@ -283,21 +289,32 @@ export function createRuntime({ post }) {
       for (let k = 0; k < cur.length; k++) cur[k] -= (1 - duty) * (high.cur[k] - low.cur[k]);
     }
     leds = new Map(ledParts.map((part, k) => [part.id, Math.max(0, cur[k])]));
+    const now = performance.now();
+    for (const [id, mA] of leds) { if (mA > LED_BURN_MA) { if (!overSince.has(id)) overSince.set(id, now); } else overSince.delete(id); }
+    for (const id of [...overSince.keys()]) if (!leds.has(id)) overSince.delete(id);
+  }
+  /** 과전류가 1.5초 넘게 흐른 LED 는 타서 더는 켜지지 않음 (다시 실행하면 새 LED) */
+  function burnCheck() {
+    const now = performance.now();
+    for (const [id, since] of overSince) if (now - since > 1500) { burnt.add(id); overSince.delete(id); touch(); }
   }
   const ensure = () => { if (dirty) solve(); };
   const voltAt = (k) => { ensure(); return k === undefined || floating[k] ? null : V[k]; };
 
-  function powered(part) {
+  /** 부품에 걸린 전원 전압 (VCC − GND). 어느 한쪽이라도 이어지지 않았으면 0 */
+  function supply(part) {
     const a = voltAt(part.pins.VCC); const b = voltAt(part.pins.GND);
-    return a !== null && b !== null && a - b >= 2.5;
+    return a === null || b === null ? 0 : a - b;
   }
+  const powered = (part) => supply(part) >= (NEEDS_5V.has(part.type) ? 4.5 : 3.0);
   /** 조건에 맞게 연결된 부품을 찾음. 없으면 무엇이 잘못됐는지 한 번 알려 줌 */
   function locate(type, label, wiring, test) {
     const all = net.parts.filter((p) => p.type === type);
     const ok = all.find((p) => test(p) && powered(p));
     if (ok) return ok;
     if (!all.length) hint(`${label}: 회로에 이 부품이 없습니다. "＋ 부품"에서 추가해 연결하세요.`);
-    else if (all.some((p) => test(p))) hint(`${label}: 전원이 들어오지 않습니다. VCC → 5V(또는 3.3V), GND → GND 를 연결하세요.`);
+    else if (all.some((p) => test(p) && supply(p) >= 3.0)) hint(`${label}: 이 부품은 5V 전원이 필요합니다. VCC 를 3.3V 가 아니라 5V 에 연결하세요.`);
+    else if (all.some((p) => test(p))) hint(`${label}: 전원이 들어오지 않습니다. VCC → 5V${NEEDS_5V.has(type) ? '' : '(또는 3.3V)'}, GND → GND 를 연결하세요 (빵판의 + / − 줄을 쓴다면 그 줄도 보드의 5V / GND 에 이어져 있어야 합니다).`);
     else hint(`${label}: 신호선 연결을 확인하세요 (${wiring}).`);
     return null;
   }
@@ -606,15 +623,16 @@ export function createRuntime({ post }) {
     begin(dt, sck) { this.dt = dt; this.sck = sck; }
     _p() { return locate('hx711', '로드셀(HX711)', `DT → ${this.dt === undefined ? '?' : pinLabel(this.dt)}, SCK → ${this.sck === undefined ? '?' : pinLabel(this.sck)}`, (p) => p.pins.DT !== undefined && p.pins.DT === node(this.dt) && p.pins.SCK !== undefined && p.pins.SCK === node(this.sck)); }
     is_ready() { return !!this._p(); }
-    wait_ready() {}
-    wait_ready_timeout() { return !!this._p(); }
-    wait_ready_retry() { return !!this._p(); }
+    // 실제 라이브러리는 HX711 이 "준비됨" 신호를 줄 때까지 기다림 → 연결이 틀리면 스케치가 그 자리에서 멈춤
+    async wait_ready() { while (!this._p()) { hint('로드셀(HX711): 응답이 없어 스케치가 read() 에서 기다리고 있습니다 (실제 보드도 여기서 멈춥니다).'); await delay(100); } }
+    async wait_ready_timeout(ms = 1000) { const until = performance.now() + ms; while (!this._p()) { if (performance.now() >= until) return false; await delay(20); } return true; }
+    async wait_ready_retry(n = 3, ms = 0) { for (let i = 0; i < n; i++) { if (this._p()) return true; await delay(Math.max(ms, 10)); } return false; }
     set_gain() {}
-    read() { const p = this._p(); return p ? Math.round(84210 + (Number(p.props.weight) || 0) * 430 + noise(25)) : 0; }
-    read_average(n = 10) { let s = 0; const k = Math.max(1, n | 0); for (let i = 0; i < k; i++) s += this.read(); return Math.round(s / k); }
-    get_value(n = 1) { return this.read_average(n) - this.OFFSET; }
-    get_units(n = 1) { return this.get_value(n) / this.SCALE; }
-    tare(n = 10) { this.OFFSET = this.read_average(n); }
+    async read() { await this.wait_ready(); const p = this._p(); return p ? Math.round(84210 + (Number(p.props.weight) || 0) * 430 + noise(25)) : 0; }
+    async read_average(n = 10) { let s = 0; const k = Math.max(1, n | 0); for (let i = 0; i < k; i++) s += await this.read(); return Math.round(s / k); }
+    async get_value(n = 1) { return (await this.read_average(n)) - this.OFFSET; }
+    async get_units(n = 1) { return (await this.get_value(n)) / this.SCALE; }
+    async tare(n = 10) { this.OFFSET = await this.read_average(n); }
     set_scale(s = 1) { this.SCALE = s || 1; }
     get_scale() { return this.SCALE; }
     set_offset(o = 0) { this.OFFSET = o; }
@@ -701,14 +719,15 @@ export function createRuntime({ post }) {
     for (const p of net.parts) {
       if (p.type !== 'gps' || p.pins.TX === undefined || !powered(p)) continue;
       const text = nmea(p);
-      for (const s of softSerials) if (s.on && node(s.rxPin) === p.pins.TX) s.feed(text);
-      if (Serial.on && node(0) === p.pins.TX) Serial.feed(text);
+      const garble = (t) => Array.from(t, (ch, i) => String.fromCharCode(((ch.charCodeAt(0) * 7 + i * 13) % 96) + 128)).join('').slice(0, 60);
+      for (const s of softSerials) if (s.on && node(s.rxPin) === p.pins.TX) s.feed(s.baud === 9600 ? text : garble(text)); // 속도가 다르면 깨진 글자만 들어옴
+      if (Serial.on && node(0) === p.pins.TX) Serial.feed(Serial.baud === 9600 ? text : garble(text));
     }
   }
 
   class Servo {
-    constructor() { this.pin = -1; this.angle = 90; }
-    _show() { for (const p of net.parts) if (p.type === 'servo' && p.pins.SIG !== undefined && p.pins.SIG === node(this.pin) && powered(p)) { pstate.set(p.id, { a: this.angle }); changed = true; return; } locate('servo', '서보 모터', `신호(SIG) → ${pinLabel(this.pin)}`, (p) => p.pins.SIG !== undefined && p.pins.SIG === node(this.pin)); }
+    constructor() { this.pin = -1; this.angle = 90; servoObjs.push(this); }
+    _show() { changed = true; locate('servo', '서보 모터', `신호(SIG) → ${pinLabel(this.pin)}`, (p) => p.pins.SIG !== undefined && p.pins.SIG === node(this.pin)); }
     attach(pin) { checkPin(pin, 'Servo.attach'); this.pin = pin; pins[pin].used = true; pins[pin].mode = OUTPUT; touch(); return 1; }
     detach() { this.pin = -1; }
     attached() { return this.pin >= 0; }
@@ -719,7 +738,7 @@ export function createRuntime({ post }) {
 
   class LiquidCrystalI2C {
     constructor(addr, cols = 16, rows = 2) { this.cols = cols; this.rows = rows; this.x = 0; this.y = 0; this.light = true; this.lines = Array.from({ length: rows }, () => ' '.repeat(cols)); }
-    _show() { const p = i2c('lcd', 'LCD(I2C)'); if (p) { pstate.set(p.id, { l: this.lines.slice(), b: this.light ? 1 : 0 }); changed = true; } }
+    _show() { changed = true; if (!lcdObjs.includes(this)) lcdObjs.push(this); this.shown = !!i2c('lcd', 'LCD(I2C)'); }
     init() { this._show(); } begin() { this._show(); }
     backlight() { this.light = true; this._show(); } noBacklight() { this.light = false; this._show(); }
     clear() { this.lines = this.lines.map(() => ' '.repeat(this.cols)); this.x = 0; this.y = 0; this._show(); }
@@ -745,8 +764,9 @@ export function createRuntime({ post }) {
     for (const part of net.parts) {
       if (part.type === 'led') {
         const mA = leds.get(part.id) || 0;
-        out.parts[part.id] = { i: Math.round(mA * 10) / 10 };
-        if (mA > 30) out.warn.push(`LED 에 전류가 너무 많이 흐릅니다 (${mA.toFixed(0)}mA). 220Ω 정도의 저항을 LED 와 직렬로 연결하세요.`);
+        out.parts[part.id] = burnt.has(part.id) ? { i: 0, x: 1 } : { i: Math.round(mA * 10) / 10 };
+        if (burnt.has(part.id)) out.warn.push('LED 가 과전류로 타 버렸습니다. 220Ω 정도의 저항을 직렬로 연결한 뒤 다시 실행하세요 (다시 실행하면 새 LED 로 바뀝니다).');
+        else if (mA > 30) out.warn.push(`LED 에 전류가 너무 많이 흐릅니다 (${mA.toFixed(0)}mA). 이대로 두면 곧 탑니다. 220Ω 정도의 저항을 LED 와 직렬로 연결하세요.`);
       } else if (part.type === 'buzzer') {
         const a = voltAt(part.pins['+']); const b = voltAt(part.pins['-']);
         let f = 0;
@@ -755,11 +775,22 @@ export function createRuntime({ post }) {
           f = tp ? Math.round(tp.tone) : Math.abs(a - b) > 2 ? 2300 : 0;
         }
         out.parts[part.id] = { f };
-      } else if (pstate.has(part.id)) out.parts[part.id] = pstate.get(part.id);
+      } else if (part.type === 'servo') {
+        // 전원과 신호선이 지금 이어져 있을 때만 움직임 (빠지면 마지막 각도에서 멈춤)
+        const sv = powered(part) ? servoObjs.find((o) => o.pin >= 0 && part.pins.SIG !== undefined && node(o.pin) === part.pins.SIG) : null;
+        if (sv) pstate.set(part.id, { a: sv.angle });
+        if (pstate.has(part.id)) out.parts[part.id] = pstate.get(part.id);
+      } else if (part.type === 'lcd') {
+        // 전원이 없으면 화면이 꺼지고, 전원만 있고 신호선(SDA · SCL)이 틀리면 빈 화면만 켜짐
+        const bus = part.pins.SDA !== undefined && part.pins.SDA === node(18) && part.pins.SCL !== undefined && part.pins.SCL === node(19);
+        const obj = lcdObjs[0];
+        if (powered(part)) out.parts[part.id] = bus && obj && obj.shown ? { l: obj.lines.slice(), b: obj.light ? 1 : 0 } : { l: [], b: 1 };
+      }
     }
     return out;
   }
   function report() {
+    burnCheck();
     if (!changed) return;
     changed = false;
     const snap = snapshot();
@@ -797,6 +828,7 @@ export function createRuntime({ post }) {
       touch();
       solve();
       poke();
+      if (net.short) fail(new Error('합선(쇼트): 5V(또는 3.3V)와 GND 가 저항 없이 직접 이어져 보드의 전원이 꺼졌습니다. 그 전선을 없앤 뒤 다시 실행하세요.'));
     },
     setProp(id, key, value) { const p = partById.get(id); if (!p) return; p.props[key] = value; touch(); solve(); poke(); },
     serialIn(text) { Serial.feed(String(text)); },
@@ -805,6 +837,7 @@ export function createRuntime({ post }) {
     stop() { stopped = true; timers.forEach(clearTimeout); flushTx(); },
     /** 변환된 스케치를 실행 (setup 한 번 → loop 반복). 멈추거나 오류가 나면 끝남 */
     async run(js) {
+      if (stopped) return; // 시작하기도 전에 합선으로 꺼짐
       const tick = setInterval(report, 50);
       const gps = setInterval(gpsTick, 1000);
       timers.push(tick, gps);
