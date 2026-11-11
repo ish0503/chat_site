@@ -30,7 +30,7 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends gcc-avr avr-libc arduino-core-avr unzip
           sudo mkdir -p /opt/arduino-libs && sudo chown "$USER" /opt/arduino-libs
-          node scripts/fetch-arduino-libs.mjs /opt/arduino-libs
+          node scripts/fetch-arduino-libs.mjs /opt/arduino-libs Adafruit_SSD1306 TM1637 LedControl Encoder IRremote FastLED
           echo "ARDUINO_COMPILER=1" >> "$GITHUB_ENV"
       - name: 단위 · 통합 테스트 (권한 규칙, 요청 제한, XSS, 1:1 대화 권한, 파일 무결성, 보관함 …)
         run: npm test
@@ -54,7 +54,7 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends gcc-avr avr-libc arduino-core-avr unzip
           sudo mkdir -p /opt/arduino-libs && sudo chown "$USER" /opt/arduino-libs
-          node scripts/fetch-arduino-libs.mjs /opt/arduino-libs
+          node scripts/fetch-arduino-libs.mjs /opt/arduino-libs Adafruit_SSD1306 TM1637 LedControl Encoder IRremote FastLED
           echo "ARDUINO_COMPILER=1" >> "$GITHUB_ENV"
       - name: Playwright 설치
         run: npm i --no-save playwright && npx playwright install --with-deps chromium

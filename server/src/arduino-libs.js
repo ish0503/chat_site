@@ -28,7 +28,7 @@ export async function fetchLibrary(entry, dest, { fetchImpl = fetch } = {}) {
   const res = await fetchImpl(BASE + entry.src, { signal: AbortSignal.timeout(60_000) });
   if (!res.ok) throw new Error(`download_failed_${res.status}`);
   const zip = Buffer.from(await res.arrayBuffer());
-  if (zip.length > 8 * 1024 * 1024) throw new Error('too_large');
+  if (zip.length > 12 * 1024 * 1024) throw new Error('too_large');
   if (createHash('sha256').update(zip).digest('hex') !== entry.sha256) throw new Error('checksum_mismatch');
   const tmp = await mkdtemp(join(dest, '.tmp-'));
   try {
@@ -57,6 +57,7 @@ export function createLibraryManager({ builder, libsDir, catalog = loadCatalog()
   const installed = (id) => existsSync(join(libsDir, id));
   const serial = (fn) => { const t = queue.then(fn); queue = t.catch(() => {}); return t; };
   const wanted = () => catalog.filter((e) => (e.optional ? state.on.includes(e.id) : !state.off.includes(e.id)));
+  builder.setLibraryOrder?.(catalog.map((e) => e.id));
   const persist = async () => { try { await saveState(state); } catch { /* DB 가 없어도 설치 자체는 됨 */ } };
 
   async function installOne(id, seen = new Set()) {

@@ -138,24 +138,34 @@ export function createArduinoBuilder({
   let queue = Promise.resolve();
   let waiting = 0;
   const cache = new Map(); // 해시 → 결과 (최근 40개)
+  let libOrder = [];
   const stats = { compiled: 0, cached: 0, failed: 0 };
 
   function scanLibs() {
     libs = new Map();
     headerOwner.clear();
+    const rank = (n) => { const i = libOrder.indexOf(n); return i < 0 ? libOrder.length : i; };
     for (const base of [join(avrDir, 'libraries'), libsDir]) {
       if (!existsSync(base)) continue;
-      for (const name of readdirSync(base)) {
+      for (const name of readdirSync(base).filter((n) => !n.startsWith('.')).sort((a, b) => rank(a) - rank(b) || a.localeCompare(b))) { // 같은 헤더가 여럿이면 목록에서 앞선 라이브러리가 우선
         const dir = join(base, name);
         if (!statSync(dir).isDirectory()) continue;
         const src = existsSync(join(dir, 'src')) ? join(dir, 'src') : dir;
         const files = listFiles(src, src !== dir);
-        const lib = { name, root: src, sources: files.filter(isSource), headers: readdirSync(src).filter((f) => /\.h(pp)?$/.test(f)) };
+        const lib = { name, root: src, sources: files.filter(isSource), headers: readdirSync(src).filter((f) => /\.h(pp)?$/.test(f)), scan: files.filter((f) => /\.(h|hpp|c|cpp)$/.test(f)) };
         libs.set(name, lib);
         for (const hname of lib.headers) if (!headerOwner.has(hname)) headerOwner.set(hname, name);
       }
     }
   }
+  /** 라이브러리의 모든 파일(하위 폴더의 헤더 포함)에서 #include 줄만 모음 (한 번 읽고 기억) */
+  const includeLines = (lib) => {
+    if (!lib.inc) {
+      lib.inc = [];
+      for (const f of lib.scan) { try { const m = readFileSync(f, 'utf8').match(/^[ \t]*#[ \t]*include[ \t]*[<"][^>"\n]+[>"]/gm); if (m) lib.inc.push(m.join('\n')); } catch { /* noop */ } }
+    }
+    return lib.inc;
+  };
   const includesOf = (text) => [...text.matchAll(/^[ \t]*#[ \t]*include[ \t]*[<"]([^>"]+)[>"]/gm)].map((m) => m[1]);
   /** 스케치가 쓰는 라이브러리 (라이브러리가 쓰는 라이브러리까지) */
   function neededLibs(texts) {
@@ -166,16 +176,18 @@ export function createArduinoBuilder({
         if (!owner || need.has(owner)) continue;
         need.add(owner);
         const lib = libs.get(owner);
-        for (const f of [...lib.sources, ...lib.headers.map((x) => join(lib.root, x))]) { try { visit(readFileSync(f, 'utf8')); } catch { /* noop */ } }
+        for (const text of includeLines(lib)) visit(text);
       }
     };
     texts.forEach(visit);
     return [...need];
   }
-  const allIncludes = () => [...libs.values()].flatMap((l) => ['-I', l.root]);
+  const includesFor = (names) => names.filter((n) => libs.has(n)).flatMap((n) => { const r = libs.get(n).root; return existsSync(join(r, 'utility')) ? ['-I', r, '-I', join(r, 'utility')] : ['-I', r]; });
+  /** 라이브러리 하나와 그것이 쓰는 라이브러리들 */
+  const closure = (name) => [name, ...neededLibs(includeLines(libs.get(name))).filter((n) => n !== name)];
   const boardFlags = (board) => [`-D${BOARDS[board].define}`, '-I', join(avrDir, 'cores/arduino'), '-I', join(avrDir, 'variants', BOARDS[board].variant)];
 
-  async function compileObjects(sources, outDir, board, extra = []) {
+  async function compileObjects(sources, outDir, board, extra = [], use = [], timeout = 60_000) {
     await mkdir(outDir, { recursive: true });
     if (runAs) await chown(outDir, runAs.uid, runAs.gid);
     const objs = [];
@@ -184,20 +196,20 @@ export function createArduinoBuilder({
       const cxx = f.endsWith('.cpp');
       const args = f.endsWith('.S')
         ? ['-c', '-x', 'assembler-with-cpp', ...COMMON, ...boardFlags(board), ...extra, f, '-o', obj]
-        : ['-c', ...COMMON, ...(cxx ? CXX : ['-std=gnu11']), ...boardFlags(board), ...allIncludes(), ...extra, f, '-o', obj];
-      await run(cxx ? 'avr-g++' : 'avr-gcc', args, { cwd: outDir, runAs });
+        : ['-c', ...COMMON, ...(cxx ? CXX : ['-std=gnu11']), ...boardFlags(board), ...includesFor(use), ...extra, f, '-o', obj];
+      await run(cxx ? 'avr-g++' : 'avr-gcc', args, { cwd: outDir, runAs, timeout });
       objs.push(obj);
     }
     return objs;
   }
   /** 코어 · 라이브러리는 한 번만 컴파일해 보관 (.a) */
-  async function archive(key, sources, board) {
+  async function archive(key, sources, board, use = []) {
     const variant = BOARDS[board].variant;
     const file = join(workDir, 'cache', variant, `${key}.a`);
     if (existsSync(file)) return file;
     const dir = join(workDir, 'cache', variant, `${key}.build`);
     await rm(dir, { recursive: true, force: true });
-    const objs = await compileObjects(sources, dir, board);
+    const objs = await compileObjects(sources, dir, board, [], use, 240_000); // 큰 라이브러리는 처음 한 번 오래 걸림
     const tmp = join(dir, 'out.a');
     if (objs.length) await run('avr-gcc-ar', ['rcs', tmp, ...objs], { cwd: dir, runAs }); else await run('avr-gcc-ar', ['rcs', tmp], { cwd: dir, runAs });
     await rename(tmp, file);
@@ -225,10 +237,19 @@ export function createArduinoBuilder({
       const need = neededLibs([sketch, ...files.map((f) => f.content)]);
       const core = await archive('core', listFiles(join(avrDir, 'cores/arduino'), false).filter(isSource), board);
       const libArchives = [];
-      for (const name of need) libArchives.push(await archive(`lib-${name}`, libs.get(name).sources, board));
+      // 스케치가 직접 include 한 라이브러리만 반드시 필요. 라이브러리 안의 (조건부) include 로 딸려 온 것은 컴파일되지 않으면 뺌
+      const direct = new Set(includesOf([sketch, ...files.map((f) => f.content)].join('\n')).map((inc) => headerOwner.get(basename(inc))).filter(Boolean));
+      for (const name of need) {
+        try { libArchives.push(await archive(`lib-${name}`, libs.get(name).sources, board, closure(name))); } catch (e) {
+          if (!direct.has(name)) continue;
+          if (e.timedOut) throw new CompileError('compile_timeout');
+          const { clean } = parseErrors(e.stderr || String(e.message), job);
+          throw new CompileError('compile_error', clean, [{ file: '', line: 0, col: 0, message: `라이브러리 '${name}' 은(는) 이 보드(ATmega328P)용으로 컴파일되지 않습니다: ${(clean.match(/error: (.*)/) || [])[1] || '알 수 없는 오류'}` }]);
+        }
+      }
       let objs;
       try {
-        objs = await compileObjects([cpp, ...extras.filter(isSource)], join(job, 'obj'), board, ['-I', job]);
+        objs = await compileObjects([cpp, ...extras.filter(isSource)], join(job, 'obj'), board, ['-I', job], need);
       } catch (e) {
         if (e.timedOut) throw new CompileError('compile_timeout');
         const { clean, errors } = parseErrors(e.stderr || String(e.message), job);
@@ -271,6 +292,7 @@ export function createArduinoBuilder({
     available() { ready = ready || check(); return ready; },
     stats: () => ({ ...stats, cacheSize: cache.size, libraries: libs ? [...libs.keys()] : [] }),
     libsDir,
+    setLibraryOrder(ids) { libOrder = ids.slice(); if (libs) scanLibs(); },
     /** 라이브러리를 설치 · 삭제한 뒤: 목록을 다시 읽고, 그 라이브러리로 만든 보관 파일과 컴파일 결과를 버림 */
     libraryChanged(name) {
       for (const b of Object.values(BOARDS)) rmSync(join(workDir, 'cache', b.variant, `lib-${name}.a`), { force: true });

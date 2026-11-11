@@ -352,22 +352,30 @@ app.post('/api/arduino/compile', requireDb, route(async (req, res) => {
   const user = await authHttp(req);
   if (!(await arduino.available())) throw fail('compiler_unavailable', 501);
   if (!limiters.compile.take(user.id)) throw fail('rate_limited', 429);
-  try {
-    const out = await arduino.compile({ sketch: req.body?.sketch, board: req.body?.board || 'uno', files: req.body?.files || [] });
-    res.json({ ok: true, ...out });
-  } catch (e) {
-    if (!(e instanceof CompileError)) throw e;
-    if (e.code === 'compile_error') {
-      // 설치되지 않은 라이브러리를 include 했으면 어디서 설치하는지 알려 줌
-      const errors = e.errors.map((x) => { const h = /^([\w+.-]+\.h(?:pp)?): No such file or directory/.exec(x.message); const lib = h && arduinoLibs.missingFor(h[1]); return lib ? { ...x, message: `${h[1]} 을(를) 찾을 수 없습니다. "라이브러리" 창에서 '${lib.name}' 을(를) 설치하세요.`, library: lib.id } : h ? { ...x, message: `${h[1]} 을(를) 찾을 수 없습니다. 설치된 라이브러리가 아닙니다 — "라이브러리" 창의 목록을 확인하거나, 그 파일을 스케치와 같은 폴더에 올리세요.` } : x; });
-      return res.json({ ok: false, errors, log: e.log }); // 스케치의 오류는 정상 응답
+  const job = { sketch: req.body?.sketch, board: req.body?.board || 'uno', files: req.body?.files || [] };
+  const installed = [];
+  const missing = (e) => e.errors.map((x) => /^([\w+.-]+\.h(?:pp)?): No such file or directory/.exec(x.message)).filter(Boolean).map((h) => arduinoLibs.missingFor(h[1])).filter(Boolean);
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const out = await arduino.compile(job);
+      return res.json({ ok: true, ...out, installed });
+    } catch (e) {
+      if (!(e instanceof CompileError)) throw e;
+      if (e.code === 'compile_error') {
+        // 목록에 있지만 아직 설치되지 않은 라이브러리를 include 했으면 받아서 다시 컴파일 (목록에 있는 것만, 체크섬 확인)
+        const libs = missing(e);
+        if (libs.length && attempt < 3) {
+          try { for (const lib of libs) { await arduinoLibs.install(lib.id); installed.push(lib.name); } continue; } catch (err) { console.warn('[arduino] 자동 설치 실패:', libs.map((l) => l.id).join(','), err.message); }
+        }
+        const errors = e.errors.map((x) => { const h = /^([\w+.-]+\.h(?:pp)?): No such file or directory/.exec(x.message); const lib = h && arduinoLibs.missingFor(h[1]); return lib ? { ...x, message: `${h[1]} 을(를) 찾을 수 없습니다. "라이브러리" 창에서 '${lib.name}' 을(를) 설치하세요.`, library: lib.id } : h ? { ...x, message: `${h[1]} 을(를) 찾을 수 없습니다. 목록에 없는 라이브러리입니다 — "라이브러리" 창에서 찾아보거나, 그 파일을 스케치와 같은 폴더에 올리세요. (WiFi · 블루투스 등 ESP 전용 라이브러리는 우노 · 나노 · 프로 미니에서 쓸 수 없습니다)` } : x; });
+        return res.json({ ok: false, errors, log: e.log, installed }); // 스케치의 오류는 정상 응답
+      }
+      if (e.code === 'compiler_busy') throw fail('compiler_busy', 429);
+      if (e.code.startsWith('bad_')) throw fail(e.code, 400);
+      console.error('arduino compile', e.code, e.log);
+      throw fail(e.code, 500);
     }
-    if (e.code === 'compiler_busy') throw fail('compiler_busy', 429);
-    if (e.code.startsWith('bad_')) throw fail(e.code, 400);
-    console.error('arduino compile', e.code, e.log);
-    throw fail(e.code, 500);
   }
-  return undefined;
 }));
 
 app.post('/api/upload', requireDb, route(async (req, res) => {

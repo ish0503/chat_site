@@ -211,10 +211,12 @@ test('라이브러리 목록: 항목마다 경로 · 체크섬 · 헤더가 있�
   const ids = new Set(catalog.map((e) => e.id));
   assert.equal(ids.size, catalog.length);
   assert.ok(catalog.filter((e) => !e.optional).length >= 20);
+  assert.ok(catalog.length >= 150, `목록 ${catalog.length}개`);
   for (const e of catalog) {
     assert.match(e.id, /^[A-Za-z0-9_]+$/);
     assert.match(e.sha256, /^[0-9a-f]{64}$/);
-    assert.match(e.src, /^[\w.-]+\/[\w.-]+\/[\w.-]+\.zip$/);
+    assert.match(e.src, /^[\w.-]+(\/[\w.-]+)+\.zip$/);
+    assert.ok(!e.src.includes('..'));
     assert.ok(e.headers.length && e.desc && e.version);
     for (const dep of e.requires) assert.ok(ids.has(dep), `${e.id} → ${dep}`);
   }
@@ -290,4 +292,70 @@ test('자주 쓰는 라이브러리: 부품이 없는 것도 컴파일 · 실행
     }
     void loop() {}`, null, 2500);
   assert.deepEqual(lines(r), ['-127', 'no rtc']); // 센서 · 시계가 연결되어 있지 않을 때의 실제 동작
+});
+
+// ── 새 부품: 실제 라이브러리가 부품 모델과 신호 수준에서 대화 ──
+const pw = (id, v = '5V') => [[`${id}:VCC`, v], [`${id}:GND`, 'GND']];
+
+test('DS18B20: 1-Wire 검색 · 변환 · 읽기 (풀업 저항이 없으면 찾지 못함)', opts('OneWire', 'DallasTemperature'), async () => {
+  const sketch = '#include <OneWire.h>\n#include <DallasTemperature.h>\nOneWire ow(2); DallasTemperature s(&ow);\nvoid setup() { Serial.begin(115200); s.begin(); Serial.println(s.getDeviceCount()); s.requestTemperatures(); Serial.println(s.getTempCByIndex(0)); }\nvoid loop() {}';
+  const sensor = { id: 't', type: 'ds18b20', props: { temp: 36.5 } };
+  const good = await simulate(sketch, wired([sensor, { id: 'r', type: 'resistor', props: { ohm: 4700 } }], [...pw('t'), ['t:DQ', 'D2'], ['r:A', 'D2'], ['r:B', '5V']]), 1500);
+  assert.deepEqual(lines(good), ['1', '36.50']);
+  const cold = await simulate(sketch, wired([{ ...sensor, props: { temp: -10.5 } }, { id: 'r', type: 'resistor', props: { ohm: 4700 } }], [...pw('t'), ['t:DQ', 'D2'], ['r:A', 'D2'], ['r:B', '5V']]), 1500);
+  assert.equal(lines(cold)[1], '-10.50');
+  const noPullup = await simulate(sketch, wired([sensor], [...pw('t'), ['t:DQ', 'D2']]), 1500);
+  assert.equal(lines(noPullup)[0], '0');
+  assert.match(noPullup.hints.join(), /4\.7kΩ/);
+});
+
+test('NeoPixel(Adafruit · FastLED) · 스테퍼 · 병렬 LCD · 키패드', opts('Adafruit_NeoPixel', 'Stepper', 'LiquidCrystal', 'Keypad'), async () => {
+  const strip = wired([{ id: 'n', type: 'neopixel' }], [...pw('n'), ['n:DIN', 'D6']]);
+  const neo = await simulate('#include <Adafruit_NeoPixel.h>\nAdafruit_NeoPixel px(8, 6, NEO_GRB + NEO_KHZ800);\nvoid setup() { px.begin(); px.setPixelColor(0, px.Color(255, 0, 0)); px.setPixelColor(1, px.Color(0, 128, 0)); px.setPixelColor(7, px.Color(0, 0, 255)); px.show(); }\nvoid loop() {}', strip, 200);
+  assert.deepEqual(neo.state.parts.n.px, ['#ff0000', '#008000', '#000000', '#000000', '#000000', '#000000', '#000000', '#0000ff']);
+  if (has('FastLED')) {
+    const fast = await simulate('#include <FastLED.h>\nCRGB leds[8];\nvoid setup() { FastLED.addLeds<WS2812, 6, GRB>(leds, 8); leds[0] = CRGB(255, 0, 0); leds[2] = CRGB(0, 0, 255); FastLED.show(); }\nvoid loop() {}', strip, 200);
+    assert.deepEqual(fast.state.parts.n.px.slice(0, 3), ['#ff0000', '#000000', '#0000ff']);
+  }
+  const noPower = await simulate('#include <Adafruit_NeoPixel.h>\nAdafruit_NeoPixel px(8, 6, NEO_GRB + NEO_KHZ800);\nvoid setup() { px.begin(); px.fill(px.Color(9, 9, 9)); px.show(); }\nvoid loop() {}', wired([{ id: 'n', type: 'neopixel' }], [...pw('n', '3V3'), ['n:DIN', 'D6']]), 200);
+  assert.equal(noPower.state.parts.n, undefined);
+  // 스테퍼: 핀 순서가 맞으면 돌고, 틀리면 실제처럼 돌지 않음
+  const motor = wired([{ id: 'm', type: 'stepper' }], [...pw('m'), ['m:IN1', 'D8'], ['m:IN2', 'D9'], ['m:IN3', 'D10'], ['m:IN4', 'D11']]);
+  const turn = (pinsOrder) => simulate(`#include <Stepper.h>\nStepper m(2048, ${pinsOrder});\nvoid setup() { m.setSpeed(10); m.step(512); }\nvoid loop() {}`, motor, 2500);
+  const ok = await turn('8, 10, 9, 11');
+  assert.ok(Math.abs(ok.state.parts.m.n - 512) <= 2 && Math.abs(ok.state.parts.m.a - 90) <= 1, JSON.stringify(ok.state.parts.m));
+  const wrong = await turn('8, 9, 10, 11');
+  assert.ok(Math.abs(wrong.state.parts.m?.n || 0) <= 2, JSON.stringify(wrong.state.parts.m));
+  const lcd = await simulate('#include <LiquidCrystal.h>\nLiquidCrystal lcd(12, 11, 5, 4, 3, 2);\nvoid setup() { lcd.begin(16, 2); lcd.print("Hello"); lcd.setCursor(2, 1); lcd.print(3.14); }\nvoid loop() {}',
+    wired([{ id: 'l', type: 'lcd16' }], [...pw('l'), ['l:RS', 'D12'], ['l:E', 'D11'], ['l:D4', 'D5'], ['l:D5', 'D4'], ['l:D6', 'D3'], ['l:D7', 'D2']]), 500);
+  assert.deepEqual(lcd.state.parts.l, { l: ['Hello           ', '  3.14          '], b: 1 });
+  const keys = await simulate("#include <Keypad.h>\nchar keys[4][4] = {{'1','2','3','A'},{'4','5','6','B'},{'7','8','9','C'},{'*','0','#','D'}}; byte r[4] = {9, 8, 7, 6}; byte c[4] = {5, 4, 3, 2}; Keypad kp = Keypad(makeKeymap(keys), r, c, 4, 4);\nvoid setup() { Serial.begin(115200); }\nvoid loop() { char k = kp.getKey(); if (k) Serial.println(k); }",
+    wired([{ id: 'k', type: 'keypad' }], ['R1:D9', 'R2:D8', 'R3:D7', 'R4:D6', 'C1:D5', 'C2:D4', 'C3:D3', 'C4:D2'].map((x) => [`k:${x.split(':')[0]}`, x.split(':')[1]])), 100,
+    async (rt) => { rt.advance(100); rt.setProp('k', 'key', 6); rt.advance(100); rt.setProp('k', 'key', -1); rt.advance(100); rt.setProp('k', 'key', 13); });
+  assert.deepEqual(lines(keys), ['6', '0']);
+});
+
+test('RTC(DS3231) · OLED(SSD1306) · TM1637 · MAX7219 · 로터리 엔코더 · 적외선 리모컨', opts('RTClib', 'Adafruit_SSD1306', 'TM1637', 'LedControl', 'Encoder', 'IRremote'), async () => {
+  const i2c = (id) => [...pw(id), [`${id}:SDA`, 'A4'], [`${id}:SCL`, 'A5']];
+  const rtc = await simulate("#include <RTClib.h>\nRTC_DS3231 rtc;\nvoid setup() { Serial.begin(115200); Serial.println(rtc.begin() ? \"ok\" : \"no\"); Serial.println(rtc.lostPower()); Serial.println(rtc.now().year() >= 2024 ? \"now\" : \"old\"); rtc.adjust(DateTime(2024, 5, 6, 7, 8, 9)); delay(2000); DateTime n = rtc.now(); char buf[] = \"YYYY-MM-DD hh:mm:ss\"; Serial.println(n.toString(buf)); }\nvoid loop() {}", wired([{ id: 'c', type: 'rtc' }], i2c('c')), 2500);
+  assert.deepEqual(lines(rtc), ['ok', '0', 'now', '2024-05-06 07:08:11']);
+  const oled = await simulate('#include <Adafruit_GFX.h>\n#include <Adafruit_SSD1306.h>\nAdafruit_SSD1306 d(128, 64, &Wire, -1);\nvoid setup() { Serial.begin(115200); Serial.println(d.begin(SSD1306_SWITCHCAPVCC, 0x3C) ? "ok" : "fail"); d.clearDisplay(); d.drawPixel(0, 0, SSD1306_WHITE); d.fillRect(8, 8, 8, 8, SSD1306_WHITE); d.display(); }\nvoid loop() {}', wired([{ id: 'o', type: 'oled' }], i2c('o')), 1500);
+  assert.equal(lines(oled)[0], 'ok');
+  const fb = Buffer.from(oled.state.parts.o.fb, 'base64');
+  assert.equal(fb.length, 1024);
+  assert.equal(fb[0], 1); // (0,0)
+  assert.deepEqual([...fb.subarray(128 + 8, 128 + 16)], new Array(8).fill(255)); // 둘째 줄(8~15행)의 8~15열
+  assert.equal(fb.reduce((a, b) => a + (b ? 1 : 0), 0), 9);
+  assert.equal(oled.state.parts.o.on, 1);
+  const seg = await simulate('#include <TM1637Display.h>\nTM1637Display d(2, 3);\nvoid setup() { d.setBrightness(7); d.showNumberDec(1234); }\nvoid loop() {}', wired([{ id: 't', type: 'tm1637' }], [...pw('t'), ['t:CLK', 'D2'], ['t:DIO', 'D3']]), 300);
+  assert.deepEqual(seg.state.parts.t, { seg: [0x06, 0x5B, 0x4F, 0x66], on: 1, br: 7 });
+  const dots = await simulate('#include <LedControl.h>\nLedControl lc(12, 11, 10, 1);\nvoid setup() { lc.shutdown(0, false); lc.clearDisplay(0); lc.setLed(0, 0, 0, true); lc.setLed(0, 2, 5, true); lc.setRow(0, 7, 0xFF); }\nvoid loop() {}', wired([{ id: 'm', type: 'max7219' }], [...pw('m'), ['m:DIN', 'D12'], ['m:CLK', 'D11'], ['m:CS', 'D10']]), 300);
+  assert.deepEqual(dots.state.parts.m, { rows: [128, 0, 4, 0, 0, 0, 0, 255], on: 1 });
+  const enc = await simulate('#include <Encoder.h>\nEncoder e(2, 3); long last = -999;\nvoid setup() { Serial.begin(115200); }\nvoid loop() { long p = e.read(); if (p != last) { last = p; Serial.println(p); } }', wired([{ id: 'e', type: 'encoder' }], [...pw('e'), ['e:CLK', 'D2'], ['e:DT', 'D3']]), 100,
+    async (rt) => { rt.advance(100); rt.setProp('e', 'pos', 3); rt.advance(200); rt.setProp('e', 'pos', 1); });
+  assert.equal(Math.max(...lines(enc).map(Number)), 12); // 3칸 = 4 x 3
+  assert.equal(lines(enc).at(-1), '4');
+  const ir = await simulate('#include <IRremote.hpp>\nvoid setup() { Serial.begin(115200); IrReceiver.begin(2); }\nvoid loop() { if (IrReceiver.decode()) { Serial.println(IrReceiver.decodedIRData.command, HEX); IrReceiver.resume(); } }', wired([{ id: 'i', type: 'irrecv' }], [...pw('i'), ['i:OUT', 'D2']]), 300,
+    async (rt) => { rt.advance(300); rt.setProp('i', 'send', 0x45); rt.advance(300); rt.setProp('i', 'send', 0x1C); });
+  assert.deepEqual(lines(ir), ['45', '1C']);
 });

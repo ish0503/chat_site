@@ -326,7 +326,7 @@
 | 기능 | 사용법 |
 |---|---|
 | 기종 선택 | 회로 창 위의 목록에서 우노 · 나노 · 프로 미니 |
-| 부품 추가 | **＋ 부품** → 빵판, LED, 저항, 버튼, 가변저항, 조도 센서, 부저, 온습도(DHT11/22), 기압·고도(BMP280), 가속도·자이로(MPU6050), GPS(NEO-6M), 로드셀(HX711), 초음파(HC-SR04), 서보, LCD(I2C) |
+| 부품 추가 | **＋ 부품** → 빵판, LED, 저항, 버튼, 가변저항, 조도 센서, 부저, 로터리 엔코더, 키패드, 온습도(DHT11/22), 기압·고도(BMP280), 가속도·자이로(MPU6050), GPS(NEO-6M), 로드셀(HX711), 초음파(HC-SR04), 온도(DS18B20), 적외선 수신기, 시계(DS3231), 서보, 스테퍼, LCD(I2C · 핀 직접), OLED, 숫자 표시기(TM1637), LED 매트릭스(MAX7219), NeoPixel |
 | 배선 | 단자(보드 핀 · 부품 다리 · 빵판 구멍)를 누르고 다른 단자를 누르면(또는 끌면) 전선이 생김. 부품을 빵판 위로 끌면 구멍에 꽂힘 |
 | 센서 값 바꾸기 | 부품을 누르면 뜨는 카드에서 온도 · 고도 · 위치 · 무게 등을 조절 (실행 중에도 바로 반영) |
 | 실행 | **▶ 실행** → 스케치가 회로 연결 상태대로 동작. LED 밝기, LCD 글자, 서보 각도, 부저 소리, 시리얼 출력이 나옴. 버튼은 실행 중에 누르고 있으면 눌림 |
@@ -336,19 +336,43 @@
 
 ### 라이브러리 관리
 
-회로 창 위의 **라이브러리** 버튼으로 엽니다 (실제 컴파일러용).
+회로 창 위의 **라이브러리** 버튼으로 엽니다 (실제 컴파일러용). 목록에는 **190개가 넘는 라이브러리**가 있고, 모두 이 보드(ATmega328P)용으로 실제 컴파일해 통과한 것만 넣었습니다.
 
-- 이름 · 설명 · 헤더로 찾고, `#include <…>` 버튼을 누르면 스케치 맨 위에 넣어 줍니다.
-- **설치 / 삭제**: 로그인한 사용자가 할 수 있고, 이 서버를 쓰는 모든 사람에게 적용됩니다. 서버를 다시 배포해도 설치 상태가 유지됩니다.
-- 아무 주소에서나 받지 않습니다. `server/arduino-libs.json` 목록에 있는 라이브러리만, 공식 배포처에서 체크섬을 확인하고 받습니다. 목록에 없는 것은 `.h` / `.cpp` 를 스케치와 같은 폴더에 올려 쓰거나, 목록에 한 항목을 추가하면 됩니다.
+- **그냥 `#include` 하면 됩니다.** 목록에 있는 라이브러리는 설치되어 있지 않아도 컴파일할 때 서버가 자동으로 받아 설치합니다 (시리얼 창에 📦 표시).
+- 창에서는 이름 · 설명 · 헤더로 찾고, `#include <…>` 버튼으로 스케치 맨 위에 넣거나, 직접 설치 · 삭제할 수 있습니다 (로그인한 사용자). 설치 상태는 서버를 다시 배포해도 유지됩니다.
+- 아무 주소에서나 받지 않습니다. `server/arduino-libs.json` 목록의 라이브러리만, 공식 배포처에서 체크섬을 확인하고 받습니다.
 - **부품 없음** 표시: 컴파일과 실행은 되지만, 그 라이브러리가 다루는 부품이 회로 창에 아직 없다는 뜻입니다.
 
-| 처음부터 설치됨 | 시뮬레이터에서 |
+| 분류 | 라이브러리 (일부) |
 |---|---|
-| DHT, Adafruit BMP280 · MPU6050 · BusIO · Unified Sensor, MPU6050(I2Cdev), TinyGPS++, HX711, LiquidCrystal_I2C, Servo | 부품과 함께 동작 |
-| **ArduinoJson**, **NewPing**(초음파), **Bounce2**(버튼), **TimerOne**(타이머 인터럽트) | 그대로 동작 |
-| **Stepper**, **LiquidCrystal**(핀 6개 방식), **OneWire**, **DallasTemperature**, **Adafruit NeoPixel**, **RTClib** | 부품 없음 (컴파일 · 실행만) |
-| 필요할 때 설치: Adafruit GFX, Adafruit SSD1306, Keypad | 부품 없음 |
+| 화면 | Adafruit GFX · SSD1306 · SH110X · ST7735/ST7789 · ILI9341 · PCD8544, U8g2, U8glib, SSD1306Ascii, LiquidCrystal, LiquidCrystal_I2C, TM1637, LedControl, MD_MAX72XX, MD_Parola, SevSeg |
+| LED · 모터 | Adafruit NeoPixel · NeoMatrix · DotStar, FastLED, WS2812FX, Servo, ServoEasing, Stepper, AccelStepper, CheapStepper, Adafruit Motor Shield, PWM Servo Driver, L298N |
+| 센서 | DHT, DallasTemperature, OneWire, Adafruit BMP280 · BME280 · BME680 · BMP085 · MPU6050 · ADXL345 · INA219 · ADS1X15 · TCS34725 · SHT31 · AHTX0 …, BH1750, HX711, NewPing, HCSR04, TinyGPS++, NeoGPS, MAX6675 |
+| 입력 | Keypad, Bounce2, OneButton, RotaryEncoder, Encoder, EasyButton, JC_Button, ezButton, AceButton, CapacitiveSensor |
+| 통신 | IRremote, MFRC522, RF24, RF24Network, LoRa, RadioHead, rc-switch, PubSubClient, Ethernet, ArduinoHttpClient, NTPClient, Blynk, ModbusMaster, CAN, mcp_can, Firmata, MIDI, AltSoftSerial |
+| 저장 · 소리 | SD, SdFat, EEPROM, EEPROMEx, DFRobotDFPlayerMini, TMRpcm, Talkie, toneAC |
+| 시간 · 제어 | RTClib, Time(TimeLib), TimeAlarms, DS1307RTC, TaskScheduler, SimpleTimer, arduino-timer, TimerOne, MsTimer2, FreeRTOS, PID, QuickPID, Low-Power |
+| 계산 · 자료 | ArduinoJson, ArduinoSTL, Streaming, RunningAverage, SimpleKalmanFilter, Crypto, CRC32, Base64, Regexp, Vector, CircularBuffer |
+
+**쓸 수 없는 것**: WiFi, WiFiNINA, WiFiManager, AsyncTCP, ESPAsyncWebServer, BluetoothSerial, NimBLE-Arduino, LittleFS, ArduinoOTA, TimerThree 등은 ESP32 / ESP8266 이나 다른 칩 전용이라 우노 · 나노 · 프로 미니(ATmega328P)에서는 컴파일되지 않습니다. `Tone`(tone 함수), `Wire`, `SPI`, `SoftwareSerial`, `EEPROM` 은 따로 설치할 필요 없이 기본으로 들어 있습니다.
+
+### 부품 (실제 컴파일러에서 신호 수준으로 동작)
+
+| 부품 | 쓰는 라이브러리 | 흉내 내는 것 |
+|---|---|---|
+| 방수 온도 센서 DS18B20 | OneWire, DallasTemperature | 1-Wire 리셋 · 검색 · 변환 · 읽기. **4.7kΩ 풀업 저항**이 없으면 실제처럼 찾지 못함 |
+| NeoPixel LED 띠 (8 · 12 · 16개) | Adafruit NeoPixel, FastLED, WS2812FX | 800kHz 신호의 0 / 1 길이를 읽어 색을 표시. 5V 필요 |
+| 시계 모듈 DS3231 | RTClib 등 | I2C 0x68, 시각 읽기 · 맞추기, 배터리 유무 |
+| 스테퍼 모터 28BYJ-48 + ULN2003 | Stepper, AccelStepper | 코일 순서대로 켜야 회전. 핀 순서가 틀리면 실제처럼 돌지 않음 |
+| LCD 16x2 (핀 직접 연결) | LiquidCrystal | HD44780 4비트 명령 |
+| 키패드 4x4 | Keypad | 실행 중에 키를 누르고 있으면 줄 · 칸이 이어짐 |
+| OLED 128x64 SSD1306 | Adafruit SSD1306 + GFX | I2C 0x3C, 화면 버퍼를 그대로 그림 |
+| 4자리 숫자 표시기 TM1637 | TM1637Display | CLK · DIO 직렬 신호 → 7세그먼트 |
+| LED 매트릭스 8x8 MAX7219 | LedControl, MD_MAX72XX | 16비트 시프트 + CS |
+| 로터리 엔코더 KY-040 | Encoder, RotaryEncoder | 돌린 칸 수만큼 CLK · DT 가 어긋나게 바뀜, 누르면 SW |
+| 적외선 수신기 + 리모컨 | IRremote | 리모컨 버튼 → NEC 신호 파형 |
+
+이 부품들은 **실제 컴파일러**로 실행할 때만 동작합니다 (간이 변환기는 다루지 못함).
 
 ### 실제 컴파일러와 간이 변환기
 

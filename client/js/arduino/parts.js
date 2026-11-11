@@ -113,6 +113,58 @@ export const PART_DEFS = {
   servo: { name: '서보 모터 (SG90)', short: 'SERVO', group: '출력', color: '#3f51b5', pins: row('GND', 'VCC', 'SIG'), props: {}, desc: '#include <Servo.h> · servo.attach(9) · servo.write(각도 0~180)' },
   lcd: { name: 'LCD 16x2 (I2C)', short: 'LCD', group: '출력', color: '#2e7d32', pins: row('GND', 'VCC', 'SDA', 'SCL'), props: {}, desc: 'I2C: SDA → A4, SCL → A5.  LiquidCrystal_I2C lcd(0x27, 16, 2); · lcd.init() · lcd.backlight() · lcd.print("안녕")' },
 };
+Object.assign(PART_DEFS, {
+  ds18b20: {
+    name: '방수 온도 센서 (DS18B20)', short: 'DS18B20', group: '센서', color: '#37474f', pins: row('GND', 'DQ', ['VCC', 'VDD']), props: { temp: 22 },
+    controls: [{ key: 'temp', label: '온도', min: -55, max: 125, step: 0.5, unit: '℃' }],
+    desc: 'DQ → 디지털 핀, 그리고 DQ 와 5V 사이에 4.7kΩ 저항(풀업)이 꼭 필요합니다.  OneWire ow(2); DallasTemperature s(&ow); s.requestTemperatures(); s.getTempCByIndex(0)',
+  },
+  encoder: {
+    name: '로터리 엔코더 (KY-040)', short: 'ENCODER', group: '기본', color: '#455a64', pins: row('CLK', 'DT', 'SW', 'VCC', 'GND'), props: { pos: 0 },
+    controls: [{ key: 'pos', label: '돌림 (칸)', min: -40, max: 40, step: 1, unit: '칸' }],
+    desc: '손잡이를 돌리면 CLK · DT 가 어긋난 순서로 바뀝니다. 실행 중에 부품을 누르고 있으면 SW(누름 버튼)가 눌립니다.  Encoder / RotaryEncoder 라이브러리',
+  },
+  keypad: {
+    name: '키패드 4x4', short: 'KEYPAD', group: '기본', color: '#263238', pins: row('R1', 'R2', 'R3', 'R4', 'C1', 'C2', 'C3', 'C4'), props: {},
+    desc: '실행 중에 키를 누르고 있으면 그 줄(R)과 칸(C)이 이어집니다.  Keypad 라이브러리: byte rowPins[4] = {9,8,7,6}; byte colPins[4] = {5,4,3,2};',
+  },
+  irrecv: {
+    name: '적외선 수신기 + 리모컨', short: 'IR', group: '센서', color: '#212121', pins: row('OUT', 'GND', 'VCC'), props: {},
+    remote: ['1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '0', '#', '▲', '◀', 'OK', '▶', '▼'],
+    desc: '아래 리모컨 버튼을 누르면 NEC 신호를 받습니다.  #include <IRremote.h> · IrReceiver.begin(2); · if (IrReceiver.decode()) { IrReceiver.decodedIRData.command … IrReceiver.resume(); }',
+  },
+  rtc: {
+    name: '시계 모듈 (DS3231)', short: 'RTC', group: '센서', color: '#1a5276', pins: row('GND', 'VCC', 'SDA', 'SCL'), props: { battery: true },
+    options: [{ key: 'battery', label: '배터리', choices: [[true, '있음 (지금 시각을 기억함)'], [false, '없음 (2000-01-01 부터)']] }],
+    desc: 'I2C: SDA → A4, SCL → A5 (주소 0x68 — MPU6050 과 같으므로 함께 쓰지 마세요).  RTC_DS3231 rtc; rtc.begin(); DateTime now = rtc.now();',
+  },
+  neopixel: {
+    name: 'NeoPixel LED 띠 (WS2812)', short: 'NEOPIXEL', group: '출력', color: '#111827', pins: row('GND', 'VCC', 'DIN'), props: { count: 8 },
+    options: [{ key: 'count', label: 'LED 수', choices: [[8, '8개'], [12, '12개'], [16, '16개']] }],
+    desc: '5V 전원, DIN → 디지털 핀.  Adafruit_NeoPixel strip(8, 6, NEO_GRB + NEO_KHZ800); strip.begin(); strip.setPixelColor(0, strip.Color(255, 0, 0)); strip.show();  (FastLED 도 됨)',
+  },
+  stepper: {
+    name: '스테퍼 모터 (28BYJ-48 + ULN2003)', short: 'STEPPER', group: '출력', color: '#5d4037', pins: row('IN1', 'IN2', 'IN3', 'IN4', 'VCC', 'GND'), props: { steps: 2048 },
+    options: [{ key: 'steps', label: '한 바퀴', choices: [[2048, '2048 스텝 (28BYJ-48)'], [200, '200 스텝']] }],
+    desc: 'IN1~IN4 → 디지털 핀 8, 9, 10, 11.  Stepper 라이브러리는 핀 순서에 주의: Stepper motor(2048, 8, 10, 9, 11);  (순서가 틀리면 실제처럼 떨기만 하고 돌지 않습니다)',
+  },
+  lcd16: {
+    name: 'LCD 16x2 (핀 직접 연결)', short: 'LCD', group: '출력', color: '#2e7d32', pins: row('GND', 'VCC', 'RS', 'E', 'D4', 'D5', 'D6', 'D7'), props: {},
+    desc: 'LiquidCrystal lcd(RS, E, D4, D5, D6, D7); 예: LiquidCrystal lcd(12, 11, 5, 4, 3, 2); lcd.begin(16, 2); lcd.print("hello");  (RW 와 밝기 조절은 부품 안에서 처리)',
+  },
+  oled: {
+    name: 'OLED 화면 128x64 (SSD1306)', short: 'OLED', group: '출력', color: '#0d1b2a', pins: row('GND', 'VCC', 'SCL', 'SDA'), props: {},
+    desc: 'I2C: SDA → A4, SCL → A5, 주소 0x3C.  Adafruit_SSD1306 display(128, 64, &Wire, -1); display.begin(SSD1306_SWITCHCAPVCC, 0x3C); … display.display();  (화면 버퍼가 메모리 1KB 를 씁니다)',
+  },
+  tm1637: {
+    name: '4자리 숫자 표시기 (TM1637)', short: 'TM1637', group: '출력', color: '#1b1b1b', pins: row('CLK', 'DIO', 'VCC', 'GND'), props: {},
+    desc: '#include <TM1637Display.h> · TM1637Display display(CLK핀, DIO핀); display.setBrightness(7); display.showNumberDec(1234);',
+  },
+  max7219: {
+    name: 'LED 매트릭스 8x8 (MAX7219)', short: 'MAX7219', group: '출력', color: '#7f1d1d', pins: row('VCC', 'GND', 'DIN', 'CS', 'CLK'), props: {},
+    desc: 'LedControl lc(DIN핀, CLK핀, CS핀, 1); lc.shutdown(0, false); lc.setIntensity(0, 8); lc.setLed(0, 줄, 칸, true);  (하드웨어 SPI 를 쓰는 라이브러리는 DIN → D11, CLK → D13)',
+  },
+});
 Object.setPrototypeOf(PART_DEFS, null); // 'constructor' 같은 이름의 부품 종류가 걸리지 않게
 Object.setPrototypeOf(BOARDS, null);
 export const WIRE_COLORS = ['#e53935', '#212121', '#fdd835', '#43a047', '#1e88e5', '#fb8c00', '#8e24aa', '#f5f5f5'];
