@@ -353,6 +353,7 @@ export function createIde(host) {
       ardu = createArduinoPane({
         canEdit: host.canEdit,
         onRun: () => runProject(),
+        compile: (body) => data.compileSketch(body),
         onGoto: (line) => { showArdu(false); editor.goto(line); },
         saveCircuit,
       });
@@ -710,7 +711,10 @@ export function createIde(host) {
     if (ino) {
       if (st.active !== ino.id) openFile(ino.id);
       if (st.outOpen) toggleOut(false);
-      if (ardu?.start(contentOf(ino))) showArdu(true);
+      // 같은 폴더의 .h / .cpp 파일도 함께 컴파일
+      const extra = kids(ino.parentId).filter((k) => k.kind === 'file' && /^[A-Za-z0-9_][\w.-]*\.(h|hpp|cpp|c)$/.test(k.name)).map((k) => ({ name: k.name, content: contentOf(k) }));
+      showArdu(true);
+      ardu?.start(contentOf(ino), extra);
       return undefined;
     }
     const target = (active && runnable(langFromName(active.name)) ? active : null)

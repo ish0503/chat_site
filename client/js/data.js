@@ -65,6 +65,12 @@ export class DataService extends Emitter {
   get maxUploadBytes() { return (this.server?.maxUploadMb ?? config.maxUploadMb) * 1024 * 1024; }
   can(perm) { return can(this.me, perm); }
 
+  /** 아두이노 스케치를 서버의 실제 컴파일러로 컴파일 (서버에 연결되어 있을 때만) */
+  async compileSketch(body) {
+    if (!this.isOnline || !config.serverUrl || !this.token) throw new OpError('offline');
+    return api.compileSketch(config.serverUrl, this.token, body);
+  }
+
   status() {
     return {
       mode: this.mode, needsLogin: this.needsLogin, pendingOps: this.pendingOps, serverUrl: config.serverUrl, error: this.lastError, lastSync: this.lastSync || 0,

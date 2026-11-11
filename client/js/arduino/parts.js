@@ -72,12 +72,14 @@ export const PART_DEFS = {
   },
   buzzer: { name: '부저', group: '기본', pins: [['+', 0, 0, '+'], ['-', PITCH, 0, '−']], props: {}, desc: '+ 를 핀에, − 를 GND 에. tone(핀, 주파수) 로 소리를 냅니다.' },
   dht: {
-    name: '온습도 센서 (DHT11 / DHT22)', short: 'DHT', group: '센서', color: '#2f80c2', pins: row('VCC', 'DATA', 'GND'), props: { temp: 25, hum: 50 },
+    name: '온습도 센서 (DHT11 / DHT22)', short: 'DHT', group: '센서', color: '#2f80c2', pins: row('VCC', 'DATA', 'GND'), props: { temp: 25, hum: 50, model: 'DHT11' },
+    options: [{ key: 'model', label: '종류', choices: [['DHT11', 'DHT11 (파란색 · 1℃ 단위)'], ['DHT22', 'DHT22 (흰색 · 0.1℃ 단위)']] }],
     controls: [{ key: 'temp', label: '온도', min: -10, max: 50, step: 0.5, unit: '℃' }, { key: 'hum', label: '습도', min: 0, max: 100, step: 1, unit: '%' }],
     desc: 'VCC → 5V, GND → GND, DATA → 디지털 핀.  #include <DHT.h> · DHT dht(2, DHT11); · dht.readTemperature()',
   },
   bmp280: {
-    name: '기압 · 고도 센서 (BMP280)', short: 'BMP280', group: '센서', color: '#7b3fa0', pins: row('VCC', 'GND', 'SCL', 'SDA'), props: { temp: 25, alt: 50, sea: 1013.25 },
+    name: '기압 · 고도 센서 (BMP280)', short: 'BMP280', group: '센서', color: '#7b3fa0', pins: row('VCC', 'GND', 'SCL', 'SDA'), props: { temp: 25, alt: 50, sea: 1013.25, addr: 0x76 },
+    options: [{ key: 'addr', label: 'I2C 주소', choices: [[0x76, '0x76 (대부분의 모듈)'], [0x77, '0x77']] }],
     controls: [{ key: 'alt', label: '고도', min: -100, max: 9000, step: 1, unit: 'm' }, { key: 'temp', label: '온도', min: -20, max: 60, step: 0.5, unit: '℃' }, { key: 'sea', label: '해수면 기압', min: 950, max: 1050, step: 0.25, unit: 'hPa' }],
     desc: 'I2C: SDA → A4, SCL → A5.  #include <Adafruit_BMP280.h> · bmp.begin(0x76) · bmp.readAltitude(1013.25)',
   },

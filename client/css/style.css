@@ -1199,6 +1199,7 @@ svg.links path { fill: none; stroke-width: 2; }
 .ardu-title { font-size: 13px; white-space: nowrap; }
 .ardu-bar .input, .ardu-send .input { min-height: 30px; height: 30px; padding: 0 8px; font-size: 13px; width: auto; }
 .ardu-board { max-width: 150px; }
+.run-actions .ardu-mode { min-height: 30px; height: 30px; padding: 0 6px; font-size: 12.5px; width: auto; max-width: 118px; }
 .ardu-canvas { flex: 1; min-height: 0; position: relative; overflow: hidden; background-color: var(--bg-0); background-image: radial-gradient(var(--border) 1px, transparent 1px); background-size: 16px 16px; }
 :root[data-theme="light"] .ardu-canvas { background-color: #eef0f3; }
 .ardu-svg { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; user-select: none; -webkit-user-select: none; cursor: grab; outline: none; }

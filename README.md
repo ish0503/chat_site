@@ -173,12 +173,21 @@ GitHub 에 push 하거나 PR 을 열면 `.github/workflows/test.yml` 이 두 테
    | `ANTHROPIC_API_KEY` | (선택) AI 도우미. 비우면 꺼짐 (Secret) |
    | `AI_MODEL` | (선택) 기본 `claude-opus-5-5` |
    | `TRUST_PROXY` | (선택) 앞단 프록시 수, 기본 `1` (요청 제한에 쓰는 접속 IP 판단용) |
+   | `ARDUINO_COMPILER` | (선택) 아두이노 실제 컴파일러. 기본 `auto` (Dockerfile 로 배포하면 켜짐), `0` 이면 끔 |
 
 5. **Instance** 는 무료(Free) 또는 원하는 크기를 고르고 배포합니다. 인스턴스는 **1개**로 두세요 (통화 시그널링·접속 상태를 메모리에 두기 때문에 여러 개로 늘리면 서로 연결되지 않습니다).
 6. 배포된 주소(예: `https://chat-site-xxxx.koyeb.app`)를 GitHub 변수 `SERVER_URL` 에 넣습니다. Koyeb 주소는 HTTPS 이고 WebSocket 을 지원합니다.
 7. MongoDB Atlas 의 Network Access 에는 `0.0.0.0/0` 을 허용해야 합니다 (Koyeb 의 나가는 IP 가 고정되지 않음).
 
 > Koyeb 무료 인스턴스는 일정 시간 요청이 없으면 잠들 수 있습니다. 그동안 앱은 자동으로 “기기에 저장” 모드로 동작하고, 서버가 깨어나면 동기화됩니다.
+
+#### 아두이노 컴파일러
+
+`server/Dockerfile` 은 아두이노 스케치를 실제로 컴파일하기 위해 `avr-gcc` · 아두이노 코어 · 라이브러리 소스를 함께 설치합니다 (이미지가 수백 MB 커지고, 첫 빌드가 몇 분 더 걸립니다). 서버가 떠 있으면 코드 작업실의 아두이노 스케치는 실제 기계어로 실행되고, 서버가 잠들어 있거나 컴파일러가 없으면 브라우저 안의 간이 변환기로 실행됩니다.
+
+- 컴파일러는 남이 쓴 코드를 읽으므로, 서버(root)와 다른 사용자(`nobody`)로 환경 변수 없이 실행합니다. 서버를 root 가 아닌 사용자로 띄우면 이 분리를 할 수 없어 기능이 꺼집니다 (`ARDUINO_COMPILER=1` 로 강제로 켤 수 있지만, 그 경우 스케치가 서버의 환경 변수를 읽을 수 있으므로 신뢰할 수 있는 사용자만 있을 때 쓰세요).
+- 컴파일은 한 번에 하나씩 처리하고, 사용자별로 횟수를 제한합니다. 무료 인스턴스에서 메모리가 모자라면 `ARDUINO_COMPILER=0` 으로 끄세요.
+- 내 컴퓨터(Ubuntu 24.04)에서 쓰려면: `sudo apt install gcc-avr avr-libc arduino-core-avr unzip && sudo sh server/scripts/fetch-arduino-libs.sh /opt/arduino-libs` 후 `ARDUINO_COMPILER=1 npm run dev:memory`. 확인: `GET /api/arduino/status`.
 
 ### 3. GitHub Pages (클라이언트)
 1. 저장소 **Settings → Pages → Build and deployment → Source** 를 **GitHub Actions** 로 바꿉니다.
