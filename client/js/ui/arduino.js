@@ -2,7 +2,7 @@
 // 스케치는 compiler.js 가 JS 로 바꾸고, Worker(runtime.js)가 회로 연결 상태에 따라 실행합니다.
 import { h, toast, debounce } from '../util.js';
 import { icon } from './icons.js';
-import { openMenu } from './common.js';
+import { openMenu, openModal } from './common.js';
 import { compileSketch } from '../arduino/compiler.js';
 import {
   BOARDS, PART_DEFS, WIRE_COLORS, PITCH, BB, PWM, bbHoles, holeNear, pinsOf, boardPins, terminalPos, snapPart, buildNetlist, newId, emptyCircuit, parseCircuit,
@@ -57,6 +57,7 @@ export function createArduinoPane(host) {
   const bar = h('div', { class: 'ardu-bar' },
     h('strong', { class: 'ardu-title' }, '아두이노 연결'), boardSel,
     h('button', { class: 'btn small secondary', type: 'button', onclick: (e) => partMenu(e.currentTarget) }, icon('plus', 14), ' 부품'),
+    h('button', { class: 'btn small secondary ardu-lib-btn', type: 'button', title: '라이브러리 관리', 'aria-label': '라이브러리 관리', onclick: () => libraryDialog() }, icon('archive', 14), h('span', {}, ' 라이브러리')),
     delBtn, h('span', { class: 'grow' }),
     h('button', { class: 'icon-btn tiny', title: '축소', 'aria-label': '축소', onclick: () => zoomBy(1 / 1.25) }, '−'),
     h('button', { class: 'icon-btn tiny', title: '확대', 'aria-label': '확대', onclick: () => zoomBy(1.25) }, '＋'),
@@ -381,6 +382,58 @@ export function createArduinoPane(host) {
       for (const [type, def] of Object.entries(PART_DEFS)) if (def.group === group) items.push({ label: def.name, icon: type === 'breadboard' ? 'grid' : group === '센서' ? 'activity' : group === '출력' ? 'sliders' : 'plus', onClick: () => addPart(type) });
     }
     openMenu(anchor, items, { header: h('div', { class: 'menu-head muted small' }, '추가할 부품을 고르세요') });
+  }
+
+  // ── 라이브러리 관리 ──
+  const LIB_WHY = { offline: '서버에 연결되어 있지 않습니다.', compiler_unavailable: '서버에 아두이노 컴파일러가 설치되어 있지 않습니다.', forbidden: '로그인한 사용자만 설치 · 삭제할 수 있습니다.', rate_limited: '요청이 너무 잦습니다. 잠시 뒤 다시 해 보세요.', library_install_failed: '내려받지 못했습니다. 잠시 뒤 다시 해 보세요.', db_unavailable: '서버의 데이터베이스가 준비되지 않았습니다.' };
+  function libraryDialog() {
+    const search = h('input', { class: 'input', type: 'search', placeholder: '이름 · 설명 · 헤더(.h)로 찾기', 'aria-label': '라이브러리 찾기' });
+    const listEl = h('div', { class: 'lib-list' }, h('div', { class: 'spinner' }));
+    const info = h('p', { class: 'muted small' }, '실제 컴파일러(서버)에 설치된 라이브러리입니다. 설치하면 이 서버를 쓰는 모든 사람이 #include 로 쓸 수 있습니다.');
+    let libs = [];
+    let canManage = false;
+    let busy = null;
+    const render = () => {
+      const q = search.value.trim().toLowerCase();
+      const shown = libs.filter((l) => !q || `${l.name} ${l.desc} ${l.headers.join(' ')} ${l.author}`.toLowerCase().includes(q));
+      const row = (l) => h('div', { class: `lib-row${l.installed ? '' : ' off'}` },
+        h('div', { class: 'lib-head' }, h('strong', {}, l.name), l.version ? h('span', { class: 'muted small' }, `v${l.version}`) : null,
+          h('span', { class: `lib-badge ${l.builtin ? 'base' : l.installed ? 'on' : ''}` }, l.builtin ? '기본 내장' : l.installed ? '설치됨' : '설치 안 됨'),
+          l.sim === 'pins' ? h('span', { class: 'lib-badge warn', title: '컴파일과 실행은 되지만, 이 라이브러리가 다루는 부품은 회로 창에 아직 없습니다.' }, '부품 없음') : null),
+        h('div', { class: 'small' }, l.desc), h('div', { class: 'muted small' }, l.author),
+        h('div', { class: 'lib-actions' },
+          l.headers.slice(0, 2).map((hd) => h('button', { class: 'btn small ghost mono', type: 'button', disabled: !l.installed, title: '스케치 맨 위에 넣기', onclick: () => host.onInsertInclude?.(hd) }, `#include <${hd}>`)),
+          h('span', { class: 'grow' }),
+          l.builtin || !canManage ? null : h('button', { class: `btn small ${l.installed ? 'danger-ghost' : 'primary'}`, type: 'button', disabled: !!busy, onclick: () => change(l) },
+            busy === l.id ? h('span', { class: 'spinner tiny' }) : null, l.installed ? ' 삭제' : ' 설치')));
+      const on = shown.filter((l) => l.installed);
+      const off = shown.filter((l) => !l.installed);
+      listEl.replaceChildren(
+        ...(off.length ? [h('div', { class: 'lib-group' }, `설치할 수 있음 (${off.length})`), ...off.map(row)] : []),
+        ...(on.length ? [h('div', { class: 'lib-group' }, `설치됨 (${on.length})`), ...on.map(row)] : []),
+        ...(shown.length ? [] : [h('p', { class: 'muted pad' }, '찾는 라이브러리가 목록에 없습니다. 파일이 적은 라이브러리는 .h / .cpp 를 스케치와 같은 폴더에 올려 #include "이름.h" 로 쓸 수 있습니다.')]));
+    };
+    async function change(l) {
+      busy = l.id;
+      render();
+      try {
+        libs = (await host.libraries.change(l.id, l.installed ? 'remove' : 'install')).libraries;
+        toast(l.installed ? `'${l.name}' 을(를) 삭제했습니다.` : `'${l.name}' 을(를) 설치했습니다.`, 'success');
+      } catch (e) {
+        toast(e.code === 'library_in_use' ? '다른 설치된 라이브러리가 이 라이브러리를 쓰고 있어 삭제할 수 없습니다.' : LIB_WHY[e.code] || `실패했습니다 (${e.code || e.message}).`, 'error', 5000);
+      }
+      busy = null;
+      render();
+    }
+    search.addEventListener('input', render);
+    openModal({ title: '아두이노 라이브러리', cls: 'lib-modal', body: [info, search, listEl], actions: [{ label: '닫기' }] });
+    if (!host.libraries) { listEl.replaceChildren(h('p', { class: 'muted pad' }, '이 화면에서는 라이브러리를 관리할 수 없습니다.')); return; }
+    host.libraries.list().then((r) => {
+      libs = r.libraries; canManage = r.canManage && r.available;
+      if (!r.available) info.textContent = '서버에 아두이노 컴파일러가 설치되어 있지 않아, 지금은 간이 변환기로만 실행됩니다. 아래 라이브러리는 실제 컴파일러가 있을 때 쓸 수 있습니다.';
+      else if (!r.canManage) info.textContent = '실제 컴파일러(서버)에 설치된 라이브러리입니다. 설치 · 삭제는 로그인한 사용자만 할 수 있습니다.';
+      render();
+    }).catch((e) => listEl.replaceChildren(h('p', { class: 'muted pad' }, `목록을 불러오지 못했습니다: ${LIB_WHY[e.code] || e.code || e.message} 서버에 연결되어 있을 때 다시 열어 주세요.`)));
   }
 
   // ── 선택한 것의 설정 ──

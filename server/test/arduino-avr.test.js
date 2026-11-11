@@ -5,6 +5,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createArduinoBuilder, CompileError, findFunctions, inoToCpp } from '../src/arduino.js';
 import { createAvrRuntime, bmpRaw } from '../../client/js/arduino/avr-runtime.js';
+import { createLibraryManager, loadCatalog } from '../src/arduino-libs.js';
+import { makeZip } from '../../client/js/zip.js';
+import { createHash } from 'node:crypto';
+import { mkdtempSync, existsSync, readFileSync, chmodSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { buildNetlist, emptyCircuit, starterCircuit, STARTER_SKETCH } from '../../client/js/arduino/parts.js';
 
 const builder = createArduinoBuilder(process.getuid?.() === 0 ? {} : { mode: process.env.ARDUINO_COMPILER || '0' });
@@ -198,4 +204,90 @@ test('GPS: 9600bps 파형 → SoftwareSerial → TinyGPS++ (속도가 다르면 
     }`;
   assert.deepEqual(lines(await simulate(sketch(9600), circuit, 2600)), ['35.1796', '129.0756', '12', '36', '9']);
   assert.deepEqual(lines(await simulate(sketch(4800), circuit, 2600)), ['none']);
+});
+
+test('라이브러리 목록: 항목마다 경로 · 체크섬 · 헤더가 있고, 의존하는 라이브러리도 목록에 있음', () => {
+  const catalog = loadCatalog();
+  const ids = new Set(catalog.map((e) => e.id));
+  assert.equal(ids.size, catalog.length);
+  assert.ok(catalog.filter((e) => !e.optional).length >= 20);
+  for (const e of catalog) {
+    assert.match(e.id, /^[A-Za-z0-9_]+$/);
+    assert.match(e.sha256, /^[0-9a-f]{64}$/);
+    assert.match(e.src, /^[\w.-]+\/[\w.-]+\/[\w.-]+\.zip$/);
+    assert.ok(e.headers.length && e.desc && e.version);
+    for (const dep of e.requires) assert.ok(ids.has(dep), `${e.id} → ${dep}`);
+  }
+});
+
+test('라이브러리 관리: 설치(의존 라이브러리 포함) · 삭제 · 체크섬 확인 · 상태 저장', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'libs-'));
+  chmodSync(dir, 0o755); // 컴파일러(다른 사용자)가 읽을 수 있게
+  const zipOf = async (name, files) => Buffer.from(await makeZip(Object.entries(files).map(([path, content]) => ({ path: `${name}-1.0.0/${path}`, content }))).arrayBuffer());
+  const zips = { 'x/y/Base-1.0.0.zip': await zipOf('Base', { 'src/Base.h': '#define BASE 7\n', 'examples/a/a.ino': 'x' }), 'x/y/Extra-1.0.0.zip': await zipOf('Extra', { 'Extra.h': '#include <Base.h>\nint extra();\n', 'Extra.cpp': '#include "Extra.h"\nint extra() { return BASE; }\n' }) };
+  const sha = (b) => createHash('sha256').update(b).digest('hex');
+  const catalog = [
+    { id: 'Base', name: 'Base', version: '1.0.0', author: 't', src: 'x/y/Base-1.0.0.zip', sha256: sha(zips['x/y/Base-1.0.0.zip']), headers: ['Base.h'], requires: [], sim: 'full', desc: 'd' },
+    { id: 'Extra', name: 'Extra', version: '1.0.0', author: 't', src: 'x/y/Extra-1.0.0.zip', sha256: sha(zips['x/y/Extra-1.0.0.zip']), headers: ['Extra.h'], requires: ['Base'], sim: 'full', optional: true, desc: 'd' },
+    { id: 'Bad', name: 'Bad', version: '1.0.0', author: 't', src: 'x/y/Base-1.0.0.zip', sha256: '0'.repeat(64), headers: ['Bad.h'], requires: [], sim: 'full', optional: true, desc: 'd' },
+  ];
+  const changed = [];
+  let saved = null;
+  const fetched = [];
+  const fetchImpl = async (url) => { const key = url.split('/libraries/')[1]; fetched.push(key); return zips[key] ? { ok: true, arrayBuffer: async () => zips[key] } : { ok: false, status: 404 }; };
+  const make = (state) => createLibraryManager({ builder: { libraryChanged: (id) => changed.push(id) }, libsDir: dir, catalog, fetchImpl, loadState: async () => state, saveState: async (st) => { saved = JSON.parse(JSON.stringify(st)); } });
+  const mgr = make(null);
+  assert.deepEqual(await mgr.sync(), ['Base']); // 기본 라이브러리는 자동으로
+  assert.equal(readFileSync(join(dir, 'Base/src/Base.h'), 'utf8'), '#define BASE 7\n');
+  assert.equal(existsSync(join(dir, 'Base/examples')), false);
+  assert.deepEqual(mgr.list().filter((l) => !l.builtin).map((l) => [l.id, l.installed]), [['Base', true], ['Extra', false], ['Bad', false]]);
+  assert.equal(mgr.missingFor('Extra.h').id, 'Extra');
+  await mgr.install('Extra');
+  assert.ok(existsSync(join(dir, 'Extra/Extra.cpp')));
+  assert.deepEqual(saved, { on: ['Extra'], off: [] });
+  assert.equal(mgr.missingFor('Extra.h'), null);
+  await assert.rejects(mgr.install('Bad'), /checksum_mismatch/);
+  assert.equal(existsSync(join(dir, 'Bad')), false);
+  assert.throws(() => mgr.install('../etc'), /unknown_library/);
+  assert.throws(() => mgr.remove('Base'), /library_in_use/); // Extra 가 쓰는 중
+  await mgr.remove('Extra');
+  await mgr.remove('Base');
+  assert.deepEqual(saved, { on: [], off: ['Base'] });
+  assert.deepEqual(changed, ['Base', 'Extra', 'Extra', 'Base']);
+  // 서버를 다시 띄움: 지운 기본 라이브러리는 다시 받지 않고, 설치했던 선택 라이브러리는 (의존 라이브러리와 함께) 다시 받음
+  assert.deepEqual(await make({ on: [], off: ['Base'] }).sync(), []);
+  assert.deepEqual(await make({ on: ['Extra'], off: ['Base'] }).sync(), ['Extra']);
+  assert.ok(existsSync(join(dir, 'Base/src/Base.h')) && existsSync(join(dir, 'Extra/Extra.h')));
+  // 설치한 라이브러리로 실제 컴파일
+  if (available) {
+    const b = createArduinoBuilder({ libsDir: dir, workDir: mkdtempSync(join(tmpdir(), 'work-')), mode: process.getuid?.() === 0 ? 'auto' : process.env.ARDUINO_COMPILER || '0' });
+    const out = await b.compile({ sketch: '#include <Extra.h>\nvoid setup() { pinMode(extra(), OUTPUT); }\nvoid loop() {}' });
+    assert.deepEqual(out.libraries, ['Extra', 'Base']);
+  }
+});
+
+test('자주 쓰는 라이브러리: ArduinoJson · NewPing · Bounce2 · TimerOne 은 시뮬레이터에서 그대로 동작', opts('ArduinoJson', 'NewPing', 'Bounce2', 'TimerOne'), async () => {
+  const json = await simulate('#include <ArduinoJson.h>\nvoid setup() { Serial.begin(115200); JsonDocument doc; doc["temp"] = 23.5; doc["ok"] = true; serializeJson(doc, Serial); Serial.println(); JsonDocument in; deserializeJson(in, "{\\"a\\":[1,2,3]}"); Serial.println((int)in["a"][2]); }\nvoid loop() {}', null, 200);
+  assert.deepEqual(lines(json), ['{"temp":23.5,"ok":true}', '3']);
+  const ping = await simulate('#include <NewPing.h>\nNewPing sonar(7, 6, 200);\nvoid setup() { Serial.begin(115200); }\nvoid loop() { Serial.println(sonar.ping_cm()); delay(60); }', wired([{ id: 'u', type: 'hcsr04', props: { dist: 80 } }], [...power('u'), ['u:TRIG', 'D7'], ['u:ECHO', 'D6']]), 200);
+  near(lines(ping)[0], 80, 2);
+  const bounce = await simulate('#include <Bounce2.h>\nBounce b = Bounce(); int n = 0;\nvoid setup() { Serial.begin(115200); b.attach(2, INPUT_PULLUP); b.interval(5); }\nvoid loop() { b.update(); if (b.fell()) { n++; Serial.println(n); } }',
+    wired([{ id: 'btn', type: 'button' }], [['D2', 'btn:A'], ['btn:B', 'GND']]), 100, async (rt) => { rt.advance(100); rt.setProp('btn', 'pressed', true); rt.advance(50); rt.setProp('btn', 'pressed', false); rt.advance(50); rt.setProp('btn', 'pressed', true); });
+  assert.deepEqual(lines(bounce), ['1', '2']);
+  const timer = await simulate('#include <TimerOne.h>\nvolatile int t = 0; void tick() { t++; }\nvoid setup() { Serial.begin(115200); Timer1.initialize(100000); Timer1.attachInterrupt(tick); }\nvoid loop() { delay(1000); Serial.println(t); }', null, 1100);
+  assert.deepEqual(lines(timer), ['10']);
+});
+
+test('자주 쓰는 라이브러리: 부품이 없는 것도 컴파일 · 실행은 됨 (Stepper · LiquidCrystal · DallasTemperature · NeoPixel · RTClib)', opts('Stepper', 'LiquidCrystal', 'OneWire', 'DallasTemperature', 'Adafruit_NeoPixel', 'RTClib'), async () => {
+  const r = await simulate(`#include <Stepper.h>\n#include <LiquidCrystal.h>\n#include <OneWire.h>\n#include <DallasTemperature.h>\n#include <Adafruit_NeoPixel.h>\n#include <RTClib.h>
+    Stepper motor(200, 8, 9, 10, 11); LiquidCrystal lcd(12, A0, 5, 4, 3, A1); OneWire wire(2); DallasTemperature temps(&wire); Adafruit_NeoPixel strip(8, 6, NEO_GRB + NEO_KHZ800); RTC_DS3231 rtc;
+    void setup() {
+      Serial.begin(115200);
+      motor.setSpeed(60); motor.step(10); lcd.begin(16, 2); lcd.print("hi");
+      temps.begin(); temps.requestTemperatures(); Serial.println(temps.getTempCByIndex(0), 0);
+      strip.begin(); strip.setPixelColor(0, strip.Color(255, 0, 0)); strip.show();
+      Serial.println(rtc.begin() ? "rtc" : "no rtc");
+    }
+    void loop() {}`, null, 2500);
+  assert.deepEqual(lines(r), ['-127', 'no rtc']); // 센서 · 시계가 연결되어 있지 않을 때의 실제 동작
 });

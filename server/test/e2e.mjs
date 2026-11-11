@@ -286,6 +286,22 @@ try {
     await a.keyboard.insertText('void setup() {\n  Serial.begin(9600)\n}\nvoid loop() {}\n');
     await a.click('.ide-bar button:has-text("실행")');
     await a.waitForSelector('.ardu-log .run-error:has-text("번째 줄")', { timeout: 20000 }); // 실제 컴파일러는 3번째 줄, 간이 변환기는 2번째 줄로 알려 줌
+    // 라이브러리 관리 창: 목록 · #include 넣기 (실제 컴파일러가 있을 때는 설치 · 삭제까지)
+    await a.waitForTimeout(300);
+    await a.click('.ardu-bar button[aria-label="라이브러리 관리"]');
+    await a.waitForSelector('.lib-modal .lib-row:has-text("ArduinoJson")', { timeout: 8000 });
+    await a.fill('.lib-modal input[type=search]', 'keypad');
+    await a.waitForSelector('.lib-modal .lib-row:has-text("Keypad")');
+    if (await a.locator('.lib-modal .lib-row:has-text("Keypad") button:has-text("설치")').count()) {
+      await a.click('.lib-modal .lib-row:has-text("Keypad") button:has-text("설치")');
+      await a.waitForSelector('.lib-modal .lib-row:has-text("Keypad") .lib-badge.on', { timeout: 60000 });
+      await shot(a, 'arduino-libs');
+      await a.click('.lib-modal .lib-row:has-text("Keypad") button:has-text("#include <Keypad.h>")');
+      await a.click('.lib-modal .lib-row:has-text("Keypad") button:has-text("삭제")');
+      await a.waitForSelector('.lib-modal .lib-row:has-text("Keypad") .lib-badge:has-text("설치 안 됨")', { timeout: 20000 });
+      await a.keyboard.press('Escape');
+      if (!(await a.locator('.ed-input').inputValue()).startsWith('#include <Keypad.h>')) throw new Error('include not inserted');
+    } else await a.keyboard.press('Escape');
     // 센서를 추가하면 회로 파일에 저장됨
     await a.waitForTimeout(300);
     await a.click('.ardu-bar button:has-text("부품")');

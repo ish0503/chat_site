@@ -10,14 +10,14 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
  && apt-get install -y --no-install-recommends gcc-avr avr-libc arduino-core-avr ca-certificates curl unzip \
  && rm -rf /var/lib/apt/lists/*
-# 아두이노 라이브러리 소스 (DHT, BMP280, MPU6050, TinyGPS++, HX711, LiquidCrystal_I2C, Servo …) — 체크섬 확인
-COPY scripts/fetch-arduino-libs.sh /tmp/fetch-arduino-libs.sh
-RUN sh /tmp/fetch-arduino-libs.sh /opt/arduino-libs && rm /tmp/fetch-arduino-libs.sh
 COPY --from=deps /usr/local/bin/node /usr/local/bin/node
+# 아두이노 라이브러리 소스: arduino-libs.json 의 기본 라이브러리를 체크섬을 확인하며 받음 (나머지는 앱의 "라이브러리" 창에서 설치)
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
-COPY package.json ./
+COPY package.json arduino-libs.json ./
 COPY src ./src
+COPY scripts ./scripts
+RUN node scripts/fetch-arduino-libs.mjs /opt/arduino-libs
 ENV NODE_ENV=production
 # 서버는 root 로 실행하고, 컴파일러만 권한 없는 사용자(nobody)로 따로 실행합니다 (src/arduino.js 의 보안 설명 참고).
 # Koyeb 기본 포트. 다른 곳에 배포하면 PORT 환경변수로 바꿀 수 있습니다.

@@ -333,6 +333,24 @@ export function createIde(host) {
     arduToggle.replaceChildren(icon(front ? 'code' : 'chip', 14), front ? ' 코드' : ' 회로 · 출력');
     if (front) ardu?.shown();
   }
+  /** 스케치 맨 위(이미 있는 #include 들 바로 아래)에 #include 한 줄을 넣음 */
+  function insertInclude(header) {
+    if (!isIno(host.items.get(st.active))) return toast('스케치(.ino) 파일을 연 상태에서 넣을 수 있습니다.', 'warn');
+    if (!host.canEdit) return toast('이 방에서는 파일을 고칠 수 없습니다.', 'warn');
+    const text = editor.value;
+    const name = header.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (new RegExp(`^[ \\t]*#[ \\t]*include[ \\t]*[<"]${name}[>"]`, 'm').test(text)) return toast(`#include <${header}> 는 이미 있습니다.`);
+    const lines = text.split('\n');
+    let at = -1;
+    lines.forEach((l, i) => { if (/^[ \t]*#[ \t]*include\b/.test(l)) at = i; });
+    lines.splice(at + 1, 0, `#include <${header}>`);
+    const next = lines.join('\n');
+    editor.update(next);
+    st.buffers.set(st.active, next);
+    renderTabs();
+    autosave();
+    return toast(`#include <${header}> 를 넣었습니다.`, 'success');
+  }
   const arduCircuitFile = (ino) => kids(ino.parentId).find((k) => k.kind === 'file' && k.name === circuitName(ino.name));
   const saveCircuit = guard(async (text) => {
     const ino = host.items.get(st.arduFile);
@@ -354,6 +372,8 @@ export function createIde(host) {
         canEdit: host.canEdit,
         onRun: () => runProject(),
         compile: (body) => data.compileSketch(body),
+        libraries: { list: () => data.arduinoLibraries(), change: (id, action) => data.arduinoLibraryAction(id, action) },
+        onInsertInclude: (header) => insertInclude(header),
         onGoto: (line) => { showArdu(false); editor.goto(line); },
         saveCircuit,
       });

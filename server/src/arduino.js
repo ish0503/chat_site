@@ -9,7 +9,7 @@
 // 다른 사용자로 바꿀 수 없으면(루트가 아니면) ARDUINO_COMPILER=1 로 명시하지 않는 한 기능을 끕니다.
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, writeFile, chown, rename } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -142,6 +142,7 @@ export function createArduinoBuilder({
 
   function scanLibs() {
     libs = new Map();
+    headerOwner.clear();
     for (const base of [join(avrDir, 'libraries'), libsDir]) {
       if (!existsSync(base)) continue;
       for (const name of readdirSync(base)) {
@@ -269,6 +270,13 @@ export function createArduinoBuilder({
   return {
     available() { ready = ready || check(); return ready; },
     stats: () => ({ ...stats, cacheSize: cache.size, libraries: libs ? [...libs.keys()] : [] }),
+    libsDir,
+    /** 라이브러리를 설치 · 삭제한 뒤: 목록을 다시 읽고, 그 라이브러리로 만든 보관 파일과 컴파일 결과를 버림 */
+    libraryChanged(name) {
+      for (const b of Object.values(BOARDS)) rmSync(join(workDir, 'cache', b.variant, `lib-${name}.a`), { force: true });
+      cache.clear();
+      if (libs) scanLibs();
+    },
     /** @returns {Promise<{ hex, flash, flashMax, ram, ramMax, libraries, cached }>} */
     async compile({ sketch, board = 'uno', files = [] }) {
       if (!(await this.available())) throw new CompileError('compiler_unavailable');

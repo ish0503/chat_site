@@ -107,6 +107,24 @@ export async function compileSketch(base, token, body) {
   return r.json();
 }
 
+/** 아두이노 라이브러리 목록 */
+export async function arduinoLibraries(base, token) {
+  const r = await req(`${base}/api/arduino/libraries`, { headers: { Authorization: `Bearer ${token}` } }, 15_000);
+  if (!r.ok) throw await errorFrom(r);
+  return r.json();
+}
+
+/** 라이브러리 설치 · 삭제 (action: 'install' | 'remove') */
+export async function arduinoLibraryAction(base, token, id, action) {
+  const r = await req(`${base}/api/arduino/libraries/${encodeURIComponent(id)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ action }),
+  }, 120_000);
+  if (!r.ok) { const e = await errorFrom(r); throw e; }
+  return r.json();
+}
+
 export async function status(base, token) {
   const r = await req(`${base}/api/status`, { headers: { Authorization: `Bearer ${token}` } }, 8000);
   if (!r.ok) throw await errorFrom(r);
