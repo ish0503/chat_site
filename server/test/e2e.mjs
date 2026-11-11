@@ -292,7 +292,7 @@ try {
     if (!listing.includes('웹 프로젝트/lib/util.js') || !listing.includes('웹 프로젝트/index.html')) throw new Error(`zip: ${listing}`);
   });
   await step('arduino: sketch project, simulator run, serial monitor, add a sensor', async () => {
-    await a.click('.ide-bar button[aria-label="프로젝트 목록으로"]');
+    await a.click('.ide-bar button[aria-label="뒤로"]');
     await a.click('.ide-home button:has-text("아두이노")');
     await a.click('.menu-item:has-text("새 아두이노 스케치")');
     await a.fill('.modal input.input', '깜빡이');
@@ -335,7 +335,7 @@ try {
     await a.click('.ide-row:has-text("circuit.json")');
     const saved = JSON.parse(await a.locator('.ed-input').inputValue());
     if (!saved.parts.some((p) => p.type === 'dht')) throw new Error('circuit not saved');
-    await a.click('.ide-bar button[aria-label="프로젝트 목록으로"]');
+    await a.click('.ide-bar button[aria-label="뒤로"]');
     await a.click('.project-card:has-text("웹 프로젝트")');
     await a.waitForSelector('.ide-project');
   });
@@ -438,6 +438,33 @@ try {
     await a.goBack();
     await a.waitForSelector('.layout:not(.drawer-open)', { timeout: 3000 });
     if (!a.url().startsWith(appUrl)) throw new Error('left the app');
+  });
+  await step('mobile code room: back button and phone back step out circuit → code → project list', async () => {
+    await a.locator('.chat-view:not(.split-pane) button[aria-label="메뉴 열기"]').click();
+    await a.waitForSelector('.layout.drawer-open');
+    await a.click('.tree-row.code');
+    await a.waitForSelector('.ide-project, .ide-home', { timeout: 5000 });
+    if (await a.locator('.ide-project').count()) { await a.click('.ide-bar button[aria-label="뒤로"]'); await a.waitForSelector('.ide-home', { timeout: 3000 }); }
+    await a.click('.project-card:has-text("깜빡이")');
+    await a.waitForSelector('.ide-project.has-ardu', { timeout: 5000 });
+    await a.click('.ide-ardu-toggle');
+    await a.waitForSelector('.ide.ardu-front .ardu-back', { timeout: 3000 });
+    await shot(a, 'mobile-ardu-back');
+    await a.goBack(); // 휴대폰 뒤로 가기 → 회로 창만 닫힘
+    await a.waitForSelector('.ide-project:not(.ardu-front)', { timeout: 3000 });
+    await a.click('.ide-ardu-toggle');
+    await a.click('.ardu-back'); // 회로 창의 뒤로 버튼
+    await a.waitForSelector('.ide-project:not(.ardu-front)', { timeout: 3000 });
+    await a.click('.ide-bar button[aria-label="파일 탐색기 열기/닫기"]');
+    await a.waitForSelector('.ide.explorer-open');
+    await a.goBack(); // 탐색기 닫힘
+    await a.waitForSelector('.ide-project:not(.explorer-open)', { timeout: 3000 });
+    await a.goBack(); // 프로젝트 목록으로
+    await a.waitForSelector('.ide-home', { timeout: 3000 });
+    if (!a.url().startsWith(appUrl)) throw new Error('left the app');
+    await a.click('.project-card:has-text("깜빡이")');
+    await a.click('.ide-bar button[aria-label="뒤로"]'); // 도구 막대의 뒤로 버튼
+    await a.waitForSelector('.ide-home', { timeout: 3000 });
   });
 } finally {
   console.log(errors.length ? `브라우저 오류:\n${errors.join('\n')}` : '브라우저 오류 없음');
