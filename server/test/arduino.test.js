@@ -222,7 +222,7 @@ test('센서: DHT (연결됨 / 신호선 틀림 / 전원 없음)', async () => {
     DHT dht(2, DHT22);
     void setup() { Serial.begin(115200); dht.begin(); }
     void loop() { float t = dht.readTemperature(); if (isnan(t)) Serial.println("fail"); else { Serial.print(t, 0); Serial.print("/"); Serial.println(dht.readHumidity(), 0); } delay(40); }`;
-  const dht = { id: 'd', type: 'dht', props: { temp: 31, hum: 64 } };
+  const dht = { id: 'd', type: 'dht', props: { temp: 31, hum: 64, model: 'DHT22' } };
   const good = await simulate(sketch, wired([dht], [['d:VCC', '5V'], ['d:GND', 'GND'], ['d:DATA', 'D2']]));
   assert.equal(lines(good)[0], '31/64');
   const wrongPin = await simulate(sketch, wired([dht], [['d:VCC', '5V'], ['d:GND', 'GND'], ['d:DATA', 'D3']]));

@@ -24,6 +24,13 @@ jobs:
           cache: npm
           cache-dependency-path: server/package-lock.json
       - run: npm ci
+      # 아두이노: 실제 컴파일러(avr-gcc)와 라이브러리를 설치해 컴파일 → 에뮬레이터 실행까지 테스트
+      - name: 아두이노 컴파일러 설치
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends gcc-avr avr-libc arduino-core-avr unzip
+          sudo sh scripts/fetch-arduino-libs.sh /opt/arduino-libs
+          echo "ARDUINO_COMPILER=1" >> "$GITHUB_ENV"
       - name: 단위 · 통합 테스트 (권한 규칙, 요청 제한, XSS, 1:1 대화 권한, 파일 무결성, 보관함 …)
         run: npm test
 
@@ -40,6 +47,13 @@ jobs:
           cache: npm
           cache-dependency-path: server/package-lock.json
       - run: npm ci
+      # 아두이노: 실제 컴파일러(avr-gcc)와 라이브러리를 설치해 컴파일 → 에뮬레이터 실행까지 테스트
+      - name: 아두이노 컴파일러 설치
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends gcc-avr avr-libc arduino-core-avr unzip
+          sudo sh scripts/fetch-arduino-libs.sh /opt/arduino-libs
+          echo "ARDUINO_COMPILER=1" >> "$GITHUB_ENV"
       - name: Playwright 설치
         run: npm i --no-save playwright && npx playwright install --with-deps chromium
       - name: 브라우저 테스트 (로그인 → 채팅 → 1:1 대화 → 분할 화면 → 보관함 → 모바일)

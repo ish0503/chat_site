@@ -96,6 +96,17 @@ export async function fetchFile(base, token, id) {
 }
 
 /** 서버 상태 (로그인 필요) */
+/** 스케치를 서버의 실제 컴파일러로 컴파일 → { ok, hex, flash, … } 또는 { ok: false, errors, log } */
+export async function compileSketch(base, token, body) {
+  const r = await req(`${base}/api/arduino/compile`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify(body),
+  }, 90_000);
+  if (!r.ok) throw await errorFrom(r);
+  return r.json();
+}
+
 export async function status(base, token) {
   const r = await req(`${base}/api/status`, { headers: { Authorization: `Bearer ${token}` } }, 8000);
   if (!r.ok) throw await errorFrom(r);

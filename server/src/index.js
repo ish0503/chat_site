@@ -11,6 +11,7 @@ import {
   HttpError, verifyGoogleToken, verifyAppleToken, signSession, verifySession, hashSecret, sameHash,
 } from './auth.js';
 import { RateLimiter, httpLimit } from './ratelimit.js';
+import { createArduinoBuilder, CompileError } from './arduino.js';
 import { aiEnabled, askAi, askBoard } from './ai.js';
 
 const LIMITS = {
@@ -107,6 +108,7 @@ const limiters = {
   upload: new RateLimiter({ capacity: 30, refillPerSec: 0.5 }), // 사용자별 업로드
   report: new RateLimiter({ capacity: 10, refillPerSec: 0.1 }), // IP별 오류 보고
   ai: new RateLimiter({ capacity: 5, refillPerSec: 1 / 60 }), // 사용자별 AI 요청
+  compile: new RateLimiter({ capacity: 12, refillPerSec: 0.2 }), // 사용자별 아두이노 컴파일
 };
 setInterval(() => Object.values(limiters).forEach((l) => l.sweep()), 5 * 60_000).unref();
 
@@ -306,6 +308,27 @@ async function checkQuota(userId, add) {
   if ((await storageUsage(userId)) + add > config.storageQuotaMb * 1024 * 1024) throw fail('quota_exceeded', 413);
 }
 const sha256 = (buf) => createHash('sha256').update(buf).digest('hex');
+
+// ── 아두이노 스케치 컴파일 (avr-gcc 가 설치된 서버에서만. 없으면 클라이언트가 간이 변환기로 실행) ──
+const arduino = createArduinoBuilder();
+app.get('/api/arduino/status', route(async (req, res) => res.json({ available: await arduino.available(), ...arduino.stats() })));
+app.post('/api/arduino/compile', requireDb, route(async (req, res) => {
+  const user = await authHttp(req);
+  if (!(await arduino.available())) throw fail('compiler_unavailable', 501);
+  if (!limiters.compile.take(user.id)) throw fail('rate_limited', 429);
+  try {
+    const out = await arduino.compile({ sketch: req.body?.sketch, board: req.body?.board || 'uno', files: req.body?.files || [] });
+    res.json({ ok: true, ...out });
+  } catch (e) {
+    if (!(e instanceof CompileError)) throw e;
+    if (e.code === 'compile_error') return res.json({ ok: false, errors: e.errors, log: e.log }); // 스케치의 오류는 정상 응답
+    if (e.code === 'compiler_busy') throw fail('compiler_busy', 429);
+    if (e.code.startsWith('bad_')) throw fail(e.code, 400);
+    console.error('arduino compile', e.code, e.log);
+    throw fail(e.code, 500);
+  }
+  return undefined;
+}));
 
 app.post('/api/upload', requireDb, route(async (req, res) => {
   const user = await authHttp(req);

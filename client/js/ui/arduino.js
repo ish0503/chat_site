@@ -69,12 +69,16 @@ export function createArduinoPane(host) {
 
   const log = h('div', { class: 'ardu-log', role: 'log', 'aria-label': '시리얼 모니터 출력' });
   const statusEl = h('span', { class: 'run-status' }, '멈춤');
-  const runBtn = h('button', { class: 'btn small primary', type: 'button', onclick: () => (st.running ? stop() : host.onRun?.()) }, icon('play', 14), ' 실행');
+  const runBtn = h('button', { class: 'btn small primary', type: 'button', onclick: () => (st.running || st.compiling ? stop() : host.onRun?.()) }, icon('play', 14), ' 실행');
   const sendInput = h('input', { class: 'input ardu-send-input', placeholder: '아두이노로 보낼 글자 (Serial.read)', 'aria-label': '시리얼로 보낼 글자', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false' });
   const endSel = h('select', { class: 'input ardu-end', 'aria-label': '줄 끝' }, h('option', { value: '\n' }, '새 줄'), h('option', { value: '' }, '줄 끝 없음'), h('option', { value: '\r\n' }, 'CR+LF'));
+  // 컴파일 방식: 자동 = 서버의 실제 컴파일러(avr-gcc) → 안 되면 브라우저 안의 간이 변환기
+  const modeSel = h('select', { class: 'input ardu-mode', 'aria-label': '컴파일 방식', title: '컴파일 방식', onchange: () => { try { localStorage.setItem('cs.ardu.mode', modeSel.value); } catch { /* noop */ } } },
+    h('option', { value: 'auto' }, '실제 컴파일러'), h('option', { value: 'simple' }, '간이 변환기'));
+  try { if (localStorage.getItem('cs.ardu.mode') === 'simple') modeSel.value = 'simple'; } catch { /* noop */ }
   const serialEl = h('div', { class: 'ardu-serial' },
     h('div', { class: 'run-head' }, h('strong', {}, '시리얼 모니터'), statusEl,
-      h('span', { class: 'run-actions' }, runBtn, h('button', { class: 'btn small ghost', type: 'button', onclick: () => clearLog() }, '지우기'))),
+      h('span', { class: 'run-actions' }, modeSel, runBtn, h('button', { class: 'btn small ghost', type: 'button', onclick: () => clearLog() }, '지우기'))),
     log,
     h('form', { class: 'ardu-send', onsubmit: (e) => { e.preventDefault(); sendSerial(); } }, sendInput, endSel, h('button', { class: 'btn small secondary', type: 'submit' }, '보내기')));
   const el = h('div', { class: 'ardu' }, circuitEl, serialEl);
@@ -601,12 +605,17 @@ export function createArduinoPane(host) {
 
   // ── 실행 ──
   function setStatus() {
-    statusEl.replaceChildren(st.running ? h('span', { class: 'spinner tiny' }) : '', st.running ? ` 실행 중${st.baud ? ` · ${st.baud} baud` : ''}` : '멈춤');
+    const slow = st.running && st.state?.speed && st.state.speed < 93 ? ` · 속도 ${st.state.speed}%` : '';
+    if (st.compiling) { statusEl.replaceChildren(h('span', { class: 'spinner tiny' }), ' 컴파일 중…'); runBtn.replaceChildren(icon('stop', 14), ' 취소'); runBtn.className = 'btn small secondary'; return; }
+    statusEl.replaceChildren(st.running ? h('span', { class: 'spinner tiny' }) : '', st.running ? `${st.real ? ' 실제 기계어' : ' 간이 변환'} ·` : '', st.running ? ` 실행 중${st.baud ? ` · ${st.baud} baud` : ''}` : '멈춤');
+    statusEl.append(slow);
     runBtn.replaceChildren(icon(st.running ? 'stop' : 'play', 14), st.running ? ' 중지' : ' 실행');
     runBtn.className = `btn small ${st.running ? 'secondary' : 'primary'}`;
     el.classList.toggle('running', st.running);
   }
   function stop({ quiet = false } = {}) {
+    st.job = (st.job || 0) + 1; // 진행 중인 컴파일 결과는 버림
+    if (st.compiling) { st.compiling = false; if (!quiet) note('■ 컴파일을 취소했습니다.'); }
     if (st.worker) { st.worker.terminate(); st.worker = null; if (!quiet) note('■ 중지했습니다.'); }
     for (const p of st.circuit.parts) if (p.props.pressed) p.props.pressed = false;
     st.running = false;
@@ -620,24 +629,62 @@ export function createArduinoPane(host) {
   function onMessage({ data }) {
     if (data.type === 'serial') appendText(data.text);
     else if (data.type === 'state') {
+      const speedWas = st.state?.speed;
       st.state = data.state;
+      if (speedWas !== data.state.speed) setStatus();
       drawSoon();
       renderWarn();
       sound(Math.max(0, ...Object.values(data.state.parts || {}).map((p) => p.f || 0)));
     } else if (data.type === 'hint') { st.hints.push(data.text); renderWarn(); } else if (data.type === 'baud') { st.baud = data.baud; setStatus(); } else if (data.type === 'error') { note(`실행 중 오류: ${data.message}`, 'run-error', data.line); stop({ quiet: true }); }
   }
-  /** 스케치를 변환하고 실행. 변환 오류면 false */
-  function start(source) {
+  const WHY = { offline: '서버에 연결되어 있지 않음', compiler_unavailable: '서버에 컴파일러가 설치되어 있지 않음', rate_limited: '컴파일 요청이 너무 잦음', compiler_busy: '서버가 다른 컴파일로 바쁨', compile_timeout: '컴파일 시간이 너무 오래 걸림', unauthorized: '로그인이 필요함' };
+  /** 서버의 실제 컴파일러로 컴파일 → { hex, info } / 스케치 오류면 false / 서버를 쓸 수 없으면 null */
+  async function compileOnServer(source, files) {
+    if (modeSel.value === 'simple' || !host.compile) return null;
+    const job = st.job;
+    st.compiling = true;
+    setStatus();
+    note('⏳ 서버의 아두이노 컴파일러(avr-gcc)로 컴파일하는 중…');
+    let r;
+    try { r = await host.compile({ sketch: source, board: st.circuit.board, files }); } catch (e) {
+      if (job !== st.job) return false;
+      st.compiling = false;
+      clearLog();
+      note(`ℹ 실제 컴파일러를 쓸 수 없어(${WHY[e.code] || e.code || e.message}) 브라우저 안의 간이 변환기로 실행합니다. 일부 문법 · 라이브러리는 동작이 다를 수 있습니다.`, 'run-warn');
+      return null;
+    }
+    if (job !== st.job) return false;
+    st.compiling = false;
+    clearLog();
+    if (!r.ok) {
+      const errs = r.errors?.length ? r.errors : [{ file: '', line: 0, message: (r.log || '알 수 없는 오류').slice(0, 600) }];
+      for (const e of errs) note(`컴파일 오류: ${e.file && e.file !== 'sketch.ino' ? `[${e.file}${e.line ? `:${e.line}` : ''}] ` : ''}${e.message}`, 'run-error', e.file === 'sketch.ino' ? e.line : 0);
+      const first = errs.find((e) => e.file === 'sketch.ino' && e.line);
+      if (first) host.onGoto?.(first.line);
+      setStatus();
+      return false;
+    }
+    const pct = (a, b) => Math.round((a / b) * 100);
+    return { hex: r.hex, info: `프로그램 ${r.flash.toLocaleString()}바이트 (${pct(r.flash, r.flashMax)}%) · 전역 변수 ${r.ram.toLocaleString()}바이트 (${pct(r.ram, r.ramMax)}%)`, ramTight: r.ram > r.ramMax * 0.75 };
+  }
+  /** 스케치를 컴파일하고 실행. 오류면 false */
+  async function start(source, files = []) {
     stop({ quiet: true });
     st.hints = [];
     clearLog();
-    let out;
-    try { out = compileSketch(source); } catch (e) {
-      note(`컴파일 오류: ${e.message}`, 'run-error', e.line || 0);
-      if (e.line) host.onGoto?.(e.line);
-      return false;
+    if (buildNetlist(st.circuit).short) { note('합선(쇼트): 5V(또는 3.3V)와 GND 가 저항 없이 직접 이어져 있어 보드를 켤 수 없습니다. 그 전선을 없앤 뒤 다시 실행하세요.', 'run-error'); renderWarn(); return false; }
+    const built = await compileOnServer(source, files);
+    if (built === false) return false;
+    let out = null;
+    if (!built) {
+      try { out = compileSketch(source); } catch (e) {
+        note(`컴파일 오류: ${e.message}`, 'run-error', e.line || 0);
+        if (e.line) host.onGoto?.(e.line);
+        return false;
+      }
+      for (const inc of out.includes) if (!KNOWN_HEADERS.test(inc)) note(`⚠ <${inc}> 라이브러리는 간이 변환기가 알지 못합니다. 그 라이브러리의 함수는 동작하지 않을 수 있습니다.`, 'run-warn');
     }
-    for (const inc of out.includes) if (!KNOWN_HEADERS.test(inc)) note(`⚠ <${inc}> 라이브러리는 이 시뮬레이터가 알지 못합니다. 그 라이브러리의 함수는 동작하지 않을 수 있습니다.`, 'run-warn');
+    st.real = !!built;
     try {
       st.worker = new Worker(new URL('../arduino/worker.js', import.meta.url), { type: 'module' });
     } catch (e) {
@@ -646,8 +693,9 @@ export function createArduinoPane(host) {
     }
     st.worker.onmessage = onMessage;
     st.worker.onerror = (e) => { note(`시뮬레이터 오류: ${e.message || '이 브라우저에서는 실행할 수 없습니다.'}`, 'run-error'); stop({ quiet: true }); };
-    st.worker.postMessage({ type: 'start', js: out.js, net: buildNetlist(st.circuit) });
+    st.worker.postMessage(built ? { type: 'start', mode: 'avr', hex: built.hex, net: buildNetlist(st.circuit) } : { type: 'start', js: out.js, net: buildNetlist(st.circuit) });
     st.running = true;
+    if (built) { note(`✓ 컴파일 완료 · ${built.info}`); if (built.ramTight) note('⚠ 전역 변수가 메모리(2KB)의 대부분을 차지합니다. 실행 중 메모리가 모자라 이상하게 동작할 수 있습니다.', 'run-warn'); }
     note(`▶ ${BOARDS[st.circuit.board].name} 에서 실행 중 — 회로를 바꾸면 바로 반영됩니다.`);
     setStatus();
     renderWarn();

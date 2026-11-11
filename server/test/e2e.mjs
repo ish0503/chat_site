@@ -276,7 +276,7 @@ try {
     await a.waitForSelector('.ide-row:has-text("sketch.ino")', { timeout: 5000 });
     await a.waitForSelector('.ide-ardu .ardu-svg');
     await a.click('.ide-bar button:has-text("실행")');
-    await a.waitForSelector('.ardu-log:has-text("깜빡인 횟수: 1")', { timeout: 8000 });
+    await a.waitForSelector('.ardu-log:has-text("깜빡인 횟수: 1")', { timeout: 30000 });
     if (await a.locator('.ardu-warn').isVisible()) throw new Error(`starter circuit warns: ${await a.locator('.ardu-warn').textContent()}`);
     await shot(a, 'arduino');
     // 컴파일 오류는 줄 번호와 함께 시리얼 창에 표시
@@ -285,7 +285,7 @@ try {
     await a.keyboard.press('Control+a');
     await a.keyboard.insertText('void setup() {\n  Serial.begin(9600)\n}\nvoid loop() {}\n');
     await a.click('.ide-bar button:has-text("실행")');
-    await a.waitForSelector('.ardu-log .run-error:has-text("2번째 줄")', { timeout: 5000 });
+    await a.waitForSelector('.ardu-log .run-error:has-text("번째 줄")', { timeout: 20000 }); // 실제 컴파일러는 3번째 줄, 간이 변환기는 2번째 줄로 알려 줌
     // 센서를 추가하면 회로 파일에 저장됨
     await a.waitForTimeout(300);
     await a.click('.ardu-bar button:has-text("부품")');
