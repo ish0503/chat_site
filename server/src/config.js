@@ -32,6 +32,10 @@ export const config = {
   callMaxParticipants: Number(process.env.CALL_MAX_PARTICIPANTS) || 8,
   // 대규모 통화용 SFU(미디어 서버) 주소. 비워 두면 mesh 로 동작합니다. (client/env.js 의 SFU_URL 과 함께 설정)
   sfuUrl: process.env.SFU_URL || '',
+  // 이 기간 동안 접속하지 않은 게스트 계정은 자동으로 삭제 (0 이면 끔)
+  guestTtlDays: process.env.GUEST_TTL_DAYS === undefined ? 7 : Number(process.env.GUEST_TTL_DAYS) || 0,
+  // 계정이 삭제된 뒤 이 기간이 지나면 그 사람과 나눈 1:1 대화를 서버에서 지움
+  deletedDmGraceDays: process.env.DELETED_DM_GRACE_DAYS === undefined ? 7 : Number(process.env.DELETED_DM_GRACE_DAYS) || 0,
   version: process.env.APP_VERSION || process.env.KOYEB_GIT_SHA?.slice(0, 8) || 'dev',
 };
 

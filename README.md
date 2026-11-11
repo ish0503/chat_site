@@ -173,6 +173,8 @@ GitHub 에 push 하거나 PR 을 열면 `.github/workflows/test.yml` 이 두 테
    | `ANTHROPIC_API_KEY` | (선택) AI 도우미. 비우면 꺼짐 (Secret) |
    | `AI_MODEL` | (선택) 기본 `claude-opus-5-5` |
    | `TRUST_PROXY` | (선택) 앞단 프록시 수, 기본 `1` (요청 제한에 쓰는 접속 IP 판단용) |
+   | `GUEST_TTL_DAYS` | (선택) 이 기간(일) 동안 접속하지 않은 게스트 계정을 자동 삭제. 기본 `7`, `0` 이면 끔 |
+   | `DELETED_DM_GRACE_DAYS` | (선택) 계정이 삭제된 뒤 그 사람과 나눈 1:1 대화를 서버에서 지우기까지의 유예 기간(일). 기본 `7` |
    | `ARDUINO_COMPILER` | (선택) 아두이노 실제 컴파일러. 기본 `auto` (Dockerfile 로 배포하면 켜짐), `0` 이면 끔 |
 
 5. **Instance** 는 무료(Free) 또는 원하는 크기를 고르고 배포합니다. 인스턴스는 **1개**로 두세요 (통화 시그널링·접속 상태를 메모리에 두기 때문에 여러 개로 늘리면 서로 연결되지 않습니다).

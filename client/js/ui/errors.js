@@ -31,6 +31,10 @@ const MESSAGES = {
   invalid_item: '저장할 수 없는 항목입니다.',
   invalid_backup: '올바른 백업 파일이 아닙니다.',
   discarded: '동기화 대기열에서 취소한 메시지입니다.',
+  user_deleted: '삭제된 계정입니다. 메시지를 보낼 수 없습니다.',
+  user_online: '지금 접속 중인 게스트는 삭제할 수 없습니다.',
+  account_deleted: '이 계정은 삭제되었습니다.',
+  not_dm: '1:1 대화에서만 할 수 있습니다.',
 };
 
 export const errorText = (e) => MESSAGES[e?.code] || MESSAGES[e?.message] || e?.message || '오류가 발생했습니다.';

@@ -143,6 +143,7 @@ export class DataService extends Emitter {
       this.#openSocket(token);
     } catch (e) {
       this.lastError = e.code || e.message;
+      if (e.code === 'account_deleted') { this.#setStatus('offline'); this.emit('accountDeleted'); return; }
       if (e.code === 'auth_needed') {
         this.#setStatus('offline', { needsLogin: true });
         return;
@@ -190,12 +191,14 @@ export class DataService extends Emitter {
     s.on('connect_error', async (err) => {
       if (this.socket !== s) return;
       this.lastError = err.message;
+      if (err.message === 'account_deleted') { this.socket = null; s.removeAllListeners(); s.disconnect(); this.#setStatus('offline'); this.emit('accountDeleted'); return; }
       if (err.message === 'unauthorized' && !authRetried) {
         authRetried = true;
         try {
           s.auth.token = await this.#ensureToken(true);
           s.connect();
         } catch (e) {
+          if (e.code === 'account_deleted') { this.emit('accountDeleted'); return; }
           this.#setStatus('offline', { needsLogin: e.code === 'auth_needed' });
         }
         return;
@@ -566,6 +569,7 @@ export class DataService extends Emitter {
       try {
         const res = await this.request('msg:list', { roomId, before, limit: PAGE });
         await this.#reconcile(roomId, res.messages, before);
+        if (res.clearedAt) await this.#forgetBefore(roomId, res.clearedAt);
       } catch (e) {
         if (!isConnectivity(e)) throw e;
       }
@@ -585,6 +589,46 @@ export class DataService extends Emitter {
 
   getMessage(id) {
     return idb.get('messages', id);
+  }
+
+  /** 이 기기에 저장된 사본 중 at 이전 메시지를 지움 (1:1 대화의 '대화 내용 지우기') */
+  async #forgetBefore(roomId, at) {
+    const old = (await idb.roomMessages(roomId, { before: at + 1, limit: 1e6 })).filter((m) => !m.pending && !m.failed);
+    for (const m of old) await this.#removeMessage(m.id, roomId, true);
+    return old.length;
+  }
+
+  /** 1:1 대화의 메시지를 나에게서만 지움 (상대에게는 그대로, 서버에도 남음) */
+  async hideMessages(ids) {
+    if (!this.isOnline) throw new OpError('offline');
+    const res = await this.request('msg:hide', { ids });
+    for (const id of res.hidden || []) await this.#removeMessage(id, null, true);
+    return (res.hidden || []).length;
+  }
+
+  /** 1:1 대화 내용을 나에게서만 모두 지움 (그 뒤에 오는 메시지는 보임) */
+  async clearDm(roomId) {
+    if (!this.isOnline) throw new OpError('offline');
+    const { clearedAt } = await this.request('dm:clear', { roomId });
+    await this.#forgetBefore(roomId, clearedAt);
+    this.emit('resync');
+  }
+
+  /** 게스트 계정 삭제 (로그인 사용자 전용, 지금 접속하지 않은 게스트만) */
+  async deleteGuests(ids) {
+    if (!this.can('removeGuests')) throw new OpError('forbidden');
+    if (!this.isOnline) throw new OpError('offline');
+    return this.request('user:deleteGuests', { ids });
+  }
+
+  /** 정리할 수 있는 게스트: 지금 접속하지 않은, 삭제되지 않은 게스트 */
+  idleGuests() {
+    return [...this.users.values()].filter((u) => u.provider === 'guest' && !u.deleted && u.id !== this.me.id && !this.online.has(u.id));
+  }
+
+  /** 목록 · 검색 · 멘션에 보여 줄 사용자 (삭제된 계정 제외) */
+  activeUsers() {
+    return [...this.users.values()].filter((u) => !u.deleted);
   }
 
   /**

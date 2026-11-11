@@ -1006,6 +1006,13 @@ body.resizing { cursor: col-resize; user-select: none; }
 .toast-action:hover { text-decoration: underline; }
 
 .row.wrap { flex-wrap: wrap; }
+.deleted-badge { font-size: 12px; padding: 1px 8px; border-radius: 8px; background: var(--danger-soft); color: var(--danger); white-space: nowrap; }
+.profile-deleted { margin: 4px 16px 0; text-align: center; }
+.member-cleanup { margin: 12px 8px 4px; justify-content: center; }
+.guest-list { display: flex; flex-direction: column; gap: 2px; max-height: 50dvh; overflow-y: auto; margin-top: 6px; }
+.guest-row { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 6px; cursor: pointer; }
+.guest-row:hover { background: var(--hover); }
+.guest-row input { width: 16px; height: 16px; flex: none; }
 .conn { background: none; border: 0; cursor: pointer; border-radius: 6px; }
 .conn:hover { background: var(--hover); }
 

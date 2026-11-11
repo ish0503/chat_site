@@ -6,14 +6,15 @@ import {
 } from '../local.js';
 import { icon } from './icons.js';
 import { avatar, badge, PRESENCE_LABEL } from './common.js';
-import { profileDialog, listSetting, lightbox } from './dialogs.js';
+import { profileDialog, listSetting, lightbox, cleanupGuestsDialog } from './dialogs.js';
 import { errorText } from './errors.js';
 import { attachResizer } from './sidebar.js';
 
 /** 멤버 목록 (오른쪽 패널, 그리고 넓은 화면의 '멤버 목록 항상 표시' 칸에서 함께 사용) */
 export function renderMemberList(ctx, container) {
   const { data } = ctx;
-  const users = [...data.users.values()].sort((a, b) => (a.nickname || '').localeCompare(b.nickname || '', 'ko'));
+  const users = data.activeUsers().sort((a, b) => (a.nickname || '').localeCompare(b.nickname || '', 'ko'));
+  const idle = data.can('removeGuests') && data.isOnline ? data.idleGuests() : [];
   const pres = (u) => data.presenceOf(u.id);
   const on = users.filter((u) => pres(u) !== 'offline');
   const off = users.filter((u) => pres(u) === 'offline');
@@ -32,6 +33,7 @@ export function renderMemberList(ctx, container) {
     data.mode !== 'online' ? h('p', { class: 'muted small pad' }, '서버에 연결되어 있지 않아 접속 상태를 알 수 없습니다.') : null,
     h('div', { class: 'member-group' }, `온라인 — ${on.length}`), ...on.map(row),
     h('div', { class: 'member-group' }, `오프라인 — ${off.length}`), ...off.map(row),
+    idle.length ? h('button', { class: 'btn small secondary member-cleanup', type: 'button', onclick: () => cleanupGuestsDialog(ctx) }, icon('trash', 14), ` 접속하지 않은 게스트 정리 (${idle.length})`) : null,
   ].filter(Boolean));
 }
 
@@ -53,7 +55,7 @@ export function parseSearch(text, data) {
     const val = m[2];
     if (key === 'from') {
       const name = val.replace(/^@/, '').toLowerCase();
-      const u = [...data.users.values()].find((x) => x.nickname?.toLowerCase() === name) || [...data.users.values()].find((x) => x.nickname?.toLowerCase().includes(name));
+      const u = data.activeUsers().find((x) => x.nickname?.toLowerCase() === name) || data.activeUsers().find((x) => x.nickname?.toLowerCase().includes(name));
       f.from = u?.id || '__none__';
       f.fromName = u?.nickname || val;
     } else if (key === 'has') f.has = HAS_ALIAS[val.toLowerCase()] || val;

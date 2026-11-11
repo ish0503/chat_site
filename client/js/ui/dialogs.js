@@ -449,14 +449,15 @@ export function profileDialog(ctx, userId) {
     body: h('div', { class: 'profile' },
       h('div', { class: 'profile-banner', style: { background: bannerColor || `linear-gradient(135deg, var(--accent), ${u.provider === 'guest' ? '#6d6f78' : u.provider === 'apple' ? '#111' : '#34a853'})` } }),
       h('div', { class: 'profile-avatar' }, avatar(u, 96, { presence: pres })),
-      h('div', { class: 'profile-name' }, h('h3', {}, u.nickname), badge(u.provider, { full: true })),
+      h('div', { class: 'profile-name' }, h('h3', {}, u.nickname), u.deleted ? h('span', { class: 'deleted-badge' }, '삭제됨') : badge(u.provider, { full: true })),
+      u.deleted ? h('p', { class: 'profile-deleted muted small' }, `${u.deletedAt ? `${fmtFull(u.deletedAt)}에 ` : ''}삭제된 게스트 계정입니다. 이 사람이 채팅방에 남긴 메시지는 그대로 보입니다.${u.purgeAt ? ` 이 사람과 나눈 1:1 대화는 ${u.purgeAt > Date.now() ? `${fmtFull(u.purgeAt)}에` : '곧'} 서버에서 지워집니다.` : ''}`) : null,
       u.status ? h('p', { class: 'profile-status' }, `💬 ${u.status}`) : null,
       h('dl', { class: 'profile-info' },
         u.bio ? [h('dt', {}, '소개'), h('dd', { class: 'pre' }, u.bio)] : null,
         h('dt', {}, '로그인 방식'), h('dd', {}, `${PROVIDER_LABEL[u.provider] || u.provider}${u.provider === 'guest' ? ' (채팅만 가능)' : ''}`),
         h('dt', {}, '상태'), h('dd', {}, pres !== 'offline' ? PRESENCE_LABEL[pres] : u.lastSeen ? `마지막 접속 ${fmtFull(u.lastSeen)}` : '오프라인'),
         u.createdAt ? [h('dt', {}, '가입일'), h('dd', {}, fmtFull(u.createdAt))] : null),
-      !isMe ? h('div', { class: 'profile-extra' },
+      !isMe && !u.deleted ? h('div', { class: 'profile-extra' },
         field('메모', note),
         h('div', { class: 'row gap wrap' },
           data.can('directMessage') ? h('button', {
@@ -467,8 +468,52 @@ export function profileDialog(ctx, userId) {
           h('button', {
             class: `btn small ${isBlocked ? 'secondary' : 'danger-ghost'}`, type: 'button',
             onclick: () => { const b = blocked.toggle(userId); toast(b ? `${u.nickname}님을 차단했습니다. 메시지가 숨겨집니다.` : '차단을 해제했습니다.'); modal.close(); },
-          }, isBlocked ? '차단 해제' : '차단'))) : null),
+          }, isBlocked ? '차단 해제' : '차단'),
+          u.provider === 'guest' && data.can('removeGuests') && data.isOnline ? h('button', {
+            class: 'btn small danger-ghost', type: 'button', disabled: pres !== 'offline', title: pres !== 'offline' ? '지금 접속 중인 게스트는 삭제할 수 없습니다.' : null,
+            onclick: async () => {
+              const ok = await confirmDialog({ title: '게스트 계정 삭제', message: `${u.nickname}님의 게스트 계정을 삭제할까요?\n· 채팅방에 남긴 메시지는 '삭제된 계정' 이름으로 남습니다.\n· 이 사람과 다른 사람들이 나눈 1:1 대화는 일주일 뒤 서버에서 지워집니다.\n· 이 사람이 다시 들어오려면 새 게스트로 입장해야 합니다.`, confirmText: '삭제', danger: true });
+              if (!ok) return;
+              try { await data.deleteGuests([userId]); modal.close(); toast('게스트 계정을 삭제했습니다.'); } catch (e) { toast(errorText(e), 'error'); }
+            },
+          }, icon('trash', 14), ' 게스트 계정 삭제') : null)) : null),
     actions: isMe ? [{ label: '프로필 편집', kind: 'primary', onClick: () => { setTimeout(() => editProfileDialog(ctx), 160); } }] : [{ label: '닫기' }],
+  });
+}
+
+/** 접속하지 않은 게스트 계정을 골라서 한꺼번에 삭제 (로그인 사용자 전용) */
+export function cleanupGuestsDialog(ctx) {
+  const { data } = ctx;
+  const list = data.idleGuests().sort((a, b) => (a.lastSeen || a.createdAt || 0) - (b.lastSeen || b.createdAt || 0));
+  const chosen = new Set(list.filter((u) => Date.now() - (u.lastSeen || u.createdAt || 0) > 86400_000).map((u) => u.id));
+  const rows = h('div', { class: 'guest-list' });
+  const render = () => rows.replaceChildren(...(list.length ? list.map((u) => h('label', { class: 'guest-row' },
+    h('input', { type: 'checkbox', checked: chosen.has(u.id), onchange: (e) => { if (e.target.checked) chosen.add(u.id); else chosen.delete(u.id); count.textContent = `${chosen.size}명 선택`; } }),
+    avatar(u, 28), h('span', { class: 'grow ellipsis' }, u.nickname),
+    h('span', { class: 'muted small' }, u.lastSeen ? `마지막 접속 ${fmtStamp(u.lastSeen)}` : '접속 기록 없음'))) : [h('p', { class: 'muted pad' }, '정리할 게스트가 없습니다.')]));
+  const count = h('span', { class: 'muted small' }, `${chosen.size}명 선택`);
+  render();
+  openModal({
+    title: '게스트 계정 정리',
+    cls: 'guest-cleanup',
+    body: [
+      h('p', { class: 'muted small' }, '지금 접속하지 않은 게스트 계정입니다. 삭제하면 이름이 \'삭제된 계정\'으로 바뀌고 채팅방 메시지는 남으며, 그 사람과 나눈 1:1 대화는 일주일 뒤 서버에서 지워집니다. 일주일 넘게 접속하지 않은 게스트는 서버가 자동으로 삭제합니다.'),
+      h('div', { class: 'row gap' }, count, h('span', { class: 'grow' }),
+        h('button', { class: 'link-btn small', type: 'button', onclick: () => { list.forEach((u) => chosen.add(u.id)); render(); count.textContent = `${chosen.size}명 선택`; } }, '모두 선택'),
+        h('button', { class: 'link-btn small', type: 'button', onclick: () => { chosen.clear(); render(); count.textContent = '0명 선택'; } }, '선택 해제')),
+      rows,
+    ],
+    actions: [{ label: '취소' }, {
+      label: '선택한 계정 삭제', kind: 'danger',
+      onClick: async () => {
+        if (!chosen.size) return false;
+        try {
+          const r = await data.deleteGuests([...chosen]);
+          toast(`게스트 ${r.deleted.length}명을 삭제했습니다.${r.skipped?.length ? ` (방금 접속한 ${r.skipped.length}명은 건너뜀)` : ''}`, 'success');
+        } catch (e) { toast(errorText(e), 'error'); return false; }
+        return undefined;
+      },
+    }],
   });
 }
 
