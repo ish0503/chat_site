@@ -327,12 +327,55 @@ export function createIde(host) {
   // 아두이노 창 (스케치 .ino 를 열면 오른쪽에 뜸): 위는 회로 연결, 아래는 시리얼 모니터
   const arduEl = h('div', { class: 'ide-ardu', hidden: true });
   let ardu = null;
-  const arduToggle = h('button', { class: 'btn small secondary ide-ardu-toggle', hidden: true, onclick: () => showArdu(!el.classList.contains('ardu-front')) });
+  const arduToggle = h('button', { class: 'btn small secondary ide-ardu-toggle', hidden: true, onclick: () => (el.classList.contains('ardu-front') ? leave('ardu') : showArdu(true)) });
   function showArdu(front) {
+    const was = el.classList.contains('ardu-front');
     el.classList.toggle('ardu-front', front);
     arduToggle.replaceChildren(icon(front ? 'code' : 'chip', 14), front ? ' 코드' : ' 회로 · 출력');
     if (front) ardu?.shown();
+    if (front && !was && isMobile()) enter('ardu'); // 휴대폰: 회로 창이 코드를 덮으므로 한 단계로 셈
+    if (!front) drop('ardu');
   }
+  function setExplorer(open) {
+    st.explorerOpen = open;
+    el.classList.toggle('explorer-open', open);
+    if (open && isMobile()) enter('explorer'); // 휴대폰: 탐색기가 편집기를 덮음
+    if (!open) drop('explorer');
+  }
+
+  // ── 뒤로 가기: 지금 열린 단계를 하나씩 닫음 (회로 창 / 탐색기 → 코드 → 프로젝트 목록) ──
+  // 휴대폰 · 브라우저의 뒤로 가기도 같은 순서로 동작하도록 단계마다 기록(history)을 하나씩 남김
+  const nav = { layers: [], pushed: 0, base: 0 };
+  const UNDO = { project: () => closeProject(), ardu: () => showArdu(false), explorer: () => setExplorer(false) };
+  function enter(layer) {
+    if (nav.layers.includes(layer)) return;
+    nav.layers.push(layer);
+    if (!nav.pushed) nav.base = nav.layers.length - 1;
+    nav.pushed++;
+    history.pushState({ ide: host.roomId, depth: nav.layers.length }, '', location.href);
+  }
+  /** 그 단계와 그 위의 단계를 목록에서 뺌 (화면은 이미 닫힌 상태) */
+  function drop(layer) { const i = nav.layers.indexOf(layer); if (i >= 0) nav.layers.splice(i); }
+  /** 그 단계를 닫음: 맨 위 단계이고 기록이 남아 있으면 브라우저 뒤로 가기로 (기록과 화면이 어긋나지 않게) */
+  function leave(layer) {
+    const s = history.state;
+    if (nav.layers.at(-1) === layer && s?.ide === host.roomId && s.depth === nav.layers.length) history.back();
+    else UNDO[layer]();
+  }
+  /** 뒤로 버튼: 맨 위 단계를 닫음 */
+  const goBack = () => leave(nav.layers.at(-1) || 'project');
+  function onPop(e) {
+    const s = e.state;
+    const target = s?.ide === host.roomId ? s.depth : nav.pushed ? nav.base : null;
+    if (target === null) return;
+    while (nav.layers.length > target) {
+      const n = nav.layers.length;
+      UNDO[nav.layers.at(-1)]();
+      if (nav.layers.length === n) nav.layers.pop();
+    }
+    nav.pushed = Math.max(0, target - nav.base);
+  }
+  window.addEventListener('popstate', onPop);
   /** 스케치 맨 위(이미 있는 #include 들 바로 아래)에 #include 한 줄을 넣음 */
   function insertInclude(header) {
     if (!isIno(host.items.get(st.active))) return toast('스케치(.ino) 파일을 연 상태에서 넣을 수 있습니다.', 'warn');
@@ -366,7 +409,7 @@ export function createIde(host) {
     arduEl.hidden = !on;
     arduToggle.hidden = !on;
     el.classList.toggle('has-ardu', on);
-    if (!on) { ardu?.stop({ quiet: true }); st.arduFile = null; el.classList.remove('ardu-front'); return; }
+    if (!on) { ardu?.stop({ quiet: true }); st.arduFile = null; el.classList.remove('ardu-front'); drop('ardu'); return; }
     if (!ardu) {
       ardu = createArduinoPane({
         canEdit: host.canEdit,
@@ -374,7 +417,8 @@ export function createIde(host) {
         compile: (body) => data.compileSketch(body),
         libraries: { list: () => data.arduinoLibraries(), change: (id, action) => data.arduinoLibraryAction(id, action) },
         onInsertInclude: (header) => insertInclude(header),
-        onGoto: (line) => { showArdu(false); editor.goto(line); },
+        onGoto: (line) => { leave('ardu'); editor.goto(line); },
+        onBack: () => leave('ardu'),
         saveCircuit,
       });
       arduEl.append(ardu.el);
@@ -385,8 +429,8 @@ export function createIde(host) {
   const uploadInput = h('input', { type: 'file', multiple: true, hidden: true, onchange: () => { importFiles([...uploadInput.files]); uploadInput.value = ''; } });
 
   const toolbar = h('div', { class: 'ide-bar' },
-    h('button', { class: 'icon-btn', title: '프로젝트 목록', 'aria-label': '프로젝트 목록으로', onclick: () => closeProject() }, icon('chevronLeft')),
-    h('button', { class: 'icon-btn', title: '파일 탐색기', 'aria-label': '파일 탐색기 열기/닫기', onclick: () => { st.explorerOpen = !st.explorerOpen; el.classList.toggle('explorer-open', st.explorerOpen); } }, icon('folder')),
+    h('button', { class: 'btn small ghost ide-back', title: '뒤로 (회로 창 · 탐색기를 닫고, 그다음 프로젝트 목록으로)', 'aria-label': '뒤로', onclick: () => goBack() }, icon('chevronLeft', 18), h('span', {}, '뒤로')),
+    h('button', { class: 'icon-btn', title: '파일 탐색기', 'aria-label': '파일 탐색기 열기/닫기', onclick: () => (st.explorerOpen ? leave('explorer') : setExplorer(true)) }, icon('folder')),
     titleEl, statusEl, h('span', { class: 'grow' }), arduToggle,
     h('button', { class: 'btn small primary', title: '실행 (Ctrl+Enter)', onclick: () => runProject() }, icon('play', 14), ' 실행'),
     host.canEdit ? h('button', { class: 'icon-btn', title: '저장 (Ctrl+S)', 'aria-label': '저장', onclick: () => save(st.active) }, icon('check')) : null,
@@ -408,6 +452,8 @@ export function createIde(host) {
     st.active = null;
     el.className = `ide ide-project${st.explorerOpen ? ' explorer-open' : ''}`;
     el.replaceChildren(toolbar, ideMain);
+    // 뒤로 가기로 이 프로젝트의 기록에 돌아온 경우에는 기록을 새로 남기지 않음
+    if (history.state?.ide === host.roomId && !nav.layers.length) { nav.layers = ['project']; nav.pushed = history.state.depth; nav.base = 0; } else enter('project');
     titleEl.textContent = host.items.get(id).name;
     renderExplorer();
     const files = projectFiles();
@@ -417,6 +463,7 @@ export function createIde(host) {
   }
 
   function closeProject() {
+    drop('project');
     stopRun();
     ardu?.stop({ quiet: true });
     st.arduFile = null;
@@ -557,7 +604,7 @@ export function createIde(host) {
     showEditor();
     editor.set(contentOf(f), langFromName(f.name) || 'plaintext');
     if (line) editor.goto(line);
-    if (isMobile()) { st.explorerOpen = false; el.classList.remove('explorer-open'); }
+    if (isMobile() && st.explorerOpen) leave('explorer');
     data.sendWsFocus(host.roomId, id);
     saveState();
   }
@@ -812,6 +859,7 @@ export function createIde(host) {
       if (!st.active && st.tabs.length) openFile(st.tabs.at(-1)); else { renderTabs(); renderExplorer(); showEditor(); }
     },
     close() {
+      window.removeEventListener('popstate', onPop);
       stopRun();
       ardu?.stop({ quiet: true });
       clearInterval(focusTimer);

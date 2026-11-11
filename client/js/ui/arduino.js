@@ -79,6 +79,7 @@ export function createArduinoPane(host) {
     Object.entries(BOARDS).map(([k, b]) => h('option', { value: k }, b.name)));
   const delBtn = h('button', { class: 'icon-btn tiny', title: '선택한 것 지우기 (Delete)', 'aria-label': '선택한 것 지우기', hidden: true, onclick: () => removeSelected() }, icon('trash', 16));
   const bar = h('div', { class: 'ardu-bar' },
+    host.onBack ? h('button', { class: 'btn small ghost ardu-back', type: 'button', title: '코드로 돌아가기', 'aria-label': '뒤로 (코드로)', onclick: () => host.onBack() }, icon('chevronLeft', 18), h('span', {}, '코드')) : null,
     h('strong', { class: 'ardu-title' }, '아두이노 연결'), boardSel,
     h('button', { class: 'btn small secondary', type: 'button', onclick: (e) => partMenu(e.currentTarget) }, icon('plus', 14), ' 부품'),
     h('button', { class: 'btn small secondary ardu-lib-btn', type: 'button', title: '라이브러리 관리', 'aria-label': '라이브러리 관리', onclick: () => libraryDialog() }, icon('archive', 14), h('span', {}, ' 라이브러리')),
