@@ -227,6 +227,7 @@ export class DataService extends Emitter {
     s.on('ws:upsert', ({ roomId, items, by }) => this.#applyWs(roomId, items, { by }));
     s.on('ws:remove', ({ roomId, ids }) => this.#removeWs(roomId, ids));
     s.on('ws:focus', (e) => this.emit('wsFocus', e));
+    s.on('ws:cursor', (e) => this.emit('wsCursor', e));
     s.on('call:participants', ({ roomId, list }) => {
       if (list.length) this.calls[roomId] = list; else delete this.calls[roomId];
       this.emit('calls', roomId);
@@ -1051,6 +1052,17 @@ export class DataService extends Emitter {
 
   sendWsFocus(roomId, id) {
     if (this.isOnline) this.socket.emit('ws:focus', { roomId, id });
+  }
+
+  /** 같은 파일을 보는 사람들에게 내 커서 위치(줄 · 칸, 0부터)를 알림 */
+  sendWsCursor(roomId, id, line, col) {
+    if (this.isOnline) this.socket.emit('ws:cursor', { roomId, id, line, col });
+  }
+
+  /** 코드 파일을 AI 가 검토 · 설명 · 리팩터링 제안 (mode: review | explain | refactor) */
+  async aiCode(roomId, { name, content, mode }) {
+    if (!this.isOnline) throw new OpError('offline');
+    return this.request('ai:code', { roomId, name, content, mode }, 180_000);
   }
 
   /** 대화를 AI 로 분석해 보드 카드 초안 받기 (저장은 사용자가 승인한 뒤 putWsMany 로) */

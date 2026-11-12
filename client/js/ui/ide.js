@@ -1,8 +1,9 @@
 // 코드 작업실 (IDE): 프로젝트 목록 → 탐색기(폴더·파일) + 편집기(탭) + 실행(콘솔·미리보기)
 // 파일은 작업 공간 항목(kind: project / folder / file)으로 저장되어 서버와 동기화되고, 오프라인이면 기기에 저장됩니다.
 import {
-  h, toast, uid, escapeHtml, debounce, fmtStamp, fmtBytes, isMobile,
+  h, toast, uid, escapeHtml, debounce, throttle, colorFor, fmtStamp, fmtBytes, isMobile,
 } from '../util.js';
+import { renderMarkdown } from '../markdown.js';
 import {
   run, runnable, langFromName, loadHighlighter,
 } from '../runner.js';
@@ -66,17 +67,106 @@ const COMPLETIONS = {
 COMPLETIONS.typescript = COMPLETIONS.javascript;
 COMPLETIONS.c = COMPLETIONS.cpp;
 
-function createEditor({ onChange, onSave, onRun, readOnly, words }) {
+function createEditor({ onChange, onSave, onRun, readOnly, words, onCursor }) {
   const ta = h('textarea', { class: 'ed-input', spellcheck: 'false', autocapitalize: 'off', autocomplete: 'off', autocorrect: 'off', wrap: 'off', 'aria-label': '코드 편집기', readonly: readOnly });
   const code = h('code', {});
   const pre = h('pre', { class: 'ed-hl', 'aria-hidden': 'true' }, code);
   const gutter = h('div', { class: 'ed-gutter', 'aria-hidden': 'true' });
   const suggest = h('div', { class: 'ed-suggest', role: 'listbox', hidden: true });
-  const el = h('div', { class: 'editor' }, gutter, h('div', { class: 'ed-body' }, pre, ta, suggest));
+  const cursorLayer = h('div', { class: 'ed-cursors', 'aria-hidden': 'true' });
+  const el = h('div', { class: 'editor' }, gutter, h('div', { class: 'ed-body' }, pre, cursorLayer, ta, suggest));
   let lang = null;
   let hl = null;
-  let lines = 0;
+  let gutterSig = '';
+  let lineReal = [1]; // 화면의 각 줄 → 실제 줄 번호 (접힌 줄을 건너뜀)
   loadHighlighter().then((x) => { hl = x; paint(); });
+
+  // ── 코드 접기 ──
+  // 접은 블록은 입력창에서 빼고, 블록의 첫 줄 끝에 ' ⋯ N줄 ⟦번호⟧' 표시를 붙임. 저장 · 실행 · 공유에는 항상 펼친 전체 글(real)을 씀.
+  const folds = new Map(); // 번호 → 숨긴 글
+  let foldSeq = 0;
+  let lastGood = '';
+  const MARK = / ⋯ \d+줄 ⟦(\d+)⟧$/;
+  const markOf = (line) => { const m = MARK.exec(line); return m && folds.has(Number(m[1])) ? { id: Number(m[1]), at: m.index } : null; };
+  function expand(text) {
+    let out = text;
+    for (let round = 0; round < 40; round++) {
+      let hit = false;
+      out = out.split('\n').map((l) => { const m = markOf(l); if (!m) return l; hit = true; return `${l.slice(0, m.at)}\n${folds.get(m.id)}`; }).join('\n');
+      if (!hit) break;
+    }
+    return out;
+  }
+  const real = () => (folds.size ? expand(ta.value) : ta.value);
+  const indentOf = (l) => /^[ \t]*/.exec(l)[0].replace(/\t/g, '  ').length;
+  const bare = (l) => l.replace(/(["'`])(?:\\.|(?!\1).)*\1/g, '""').replace(/\/\/.*$|#(?!include|define).*$/, '').trimEnd();
+  const byIndent = () => lang === 'python' || lang === 'yaml';
+  /** 화면의 i번째 줄에서 시작하는 블록의 마지막 줄 (접을 것이 없으면 -1) */
+  function foldEnd(L, i) {
+    if (byIndent()) {
+      if (!L[i].trim() || (lang === 'python' && !bare(L[i]).endsWith(':'))) return -1;
+      const base = indentOf(L[i]);
+      let end = -1;
+      for (let j = i + 1; j < L.length; j++) { if (!L[j].trim()) continue; if (indentOf(L[j]) <= base) break; end = j; }
+      return end;
+    }
+    if (!/[{[(]$/.test(bare(L[i]))) return -1;
+    let depth = 0;
+    for (let j = i; j < L.length; j++) {
+      for (const ch of bare(L[j])) { if ('{[('.includes(ch)) depth++; else if ('}])'.includes(ch)) depth--; }
+      if (depth <= 0) return j - 1 > i ? j - 1 : -1; // 닫는 줄은 보이게 둠
+    }
+    return -1;
+  }
+  function applyText(text) {
+    const top = ta.scrollTop; const pos = ta.selectionStart;
+    ta.value = text;
+    lastGood = text;
+    ta.setSelectionRange(Math.min(pos, text.length), Math.min(pos, text.length));
+    paint();
+    ta.scrollTop = top;
+    sync();
+  }
+  function fold(i) {
+    const L = ta.value.split('\n');
+    const end = foldEnd(L, i);
+    if (end <= i) return;
+    const hidden = L.slice(i + 1, end + 1).join('\n');
+    const id = ++foldSeq;
+    folds.set(id, hidden);
+    L[i] = `${L[i]} ⋯ ${expand(hidden).split('\n').length}줄 ⟦${id}⟧`;
+    L.splice(i + 1, end - i);
+    applyText(L.join('\n'));
+  }
+  function unfold(id) {
+    const L = ta.value.split('\n');
+    const i = L.findIndex((l) => markOf(l)?.id === id);
+    if (i < 0) return;
+    const hidden = folds.get(id);
+    L[i] = L[i].slice(0, markOf(L[i]).at);
+    folds.delete(id);
+    L.splice(i + 1, 0, ...hidden.split('\n'));
+    applyText(L.join('\n'));
+  }
+  function unfoldAll() { if (!folds.size) return; const text = expand(ta.value); folds.clear(); applyText(text); }
+  /** 입력 뒤: 접힘 표시가 망가졌으면(접힌 줄을 지우거나 표시 안을 고침) 되돌리고 그 블록을 펼침 — 숨긴 글을 잃지 않게 */
+  function guardFolds() {
+    if (!folds.size) { lastGood = ta.value; return; }
+    const seen = new Set();
+    for (const text of [ta.value, ...folds.values()]) for (const l of text.split('\n')) { const m = markOf(l); if (m) seen.add(m.id); }
+    const broken = [...folds.keys()].filter((id) => !seen.has(id));
+    if (!broken.length) { lastGood = ta.value; return; }
+    ta.value = lastGood;
+    for (const id of broken) unfold(id);
+    toast('접힌 부분은 펼친 뒤에 고치거나 지울 수 있습니다. 펼쳐 두었어요.', 'info');
+  }
+  gutter.addEventListener('click', (e) => {
+    const row = e.target.closest('.ln');
+    if (!row) return;
+    const i = Number(row.dataset.i);
+    const m = markOf(ta.value.split('\n')[i] || '');
+    if (m) unfold(m.id); else if (row.classList.contains('fold')) fold(i);
+  });
 
   function paint() {
     const text = ta.value;
@@ -84,13 +174,68 @@ function createEditor({ onChange, onSave, onRun, readOnly, words }) {
     if (hl && lang && hl.getLanguage(lang) && text.length < 120_000) {
       try { html = hl.highlight(text, { language: lang, ignoreIllegals: true }).value; } catch { html = escapeHtml(text); }
     } else html = escapeHtml(text);
+    if (folds.size) html = html.replace(/ ⋯ \d+줄 ⟦\d+⟧/g, (all) => `<span class="ed-fold">${all}</span>`);
     code.innerHTML = `${html}\n`;
-    const n = text.split('\n').length;
-    if (n !== lines) { lines = n; gutter.textContent = Array.from({ length: n }, (_, i) => i + 1).join('\n'); }
+    // 줄 번호 (접힌 만큼 건너뜀) + 접을 수 있는 줄의 ▾ / 접힌 줄의 ▸
+    const L = text.split('\n');
+    const marks = L.length <= 4000;
+    const rows = [];
+    lineReal = [];
+    let no = 0;
+    for (let i = 0; i < L.length; i++) {
+      no++;
+      lineReal.push(no);
+      const m = marks ? markOf(L[i]) : null;
+      rows.push(`${no}${m ? 'F' : marks && foldEnd(L, i) > i ? 'f' : ''}`);
+      if (m) no += expand(folds.get(m.id)).split('\n').length;
+    }
+    const sig = rows.join(',');
+    if (sig !== gutterSig) {
+      gutterSig = sig;
+      gutter.innerHTML = rows.map((r, i) => { const k = r.at(-1); return `<div class="ln${k === 'F' ? ' folded' : k === 'f' ? ' fold' : ''}" data-i="${i}">${parseInt(r, 10)}</div>`; }).join('');
+    }
+    placeCursors();
   }
   const paintSoon = debounce(paint, 60);
-  const changed = () => { if (ta.value.length < 20_000) paint(); else paintSoon(); onChange?.(ta.value); };
-  const sync = () => { pre.scrollTop = ta.scrollTop; pre.scrollLeft = ta.scrollLeft; gutter.scrollTop = ta.scrollTop; };
+  const changed = () => { guardFolds(); if (ta.value.length < 20_000) paint(); else paintSoon(); onChange?.(real()); };
+  const sync = () => { pre.scrollTop = ta.scrollTop; pre.scrollLeft = ta.scrollLeft; gutter.scrollTop = ta.scrollTop; cursorLayer.style.transform = `translate(${-ta.scrollLeft}px, ${-ta.scrollTop}px)`; };
+
+  // ── 함께 편집하는 사람의 커서 ──
+  let cursors = []; // [{ line, col, name, color }] (실제 줄 · 칸, 0부터)
+  let metric = null;
+  function measure() {
+    if (metric) return metric;
+    const cs = getComputedStyle(ta);
+    const probe = h('span', { style: { position: 'absolute', visibility: 'hidden', whiteSpace: 'pre', font: cs.font } }, 'M'.repeat(40));
+    el.append(probe);
+    const w = probe.getBoundingClientRect().width / 40;
+    probe.remove();
+    if (!w) return { w: 8, lh: 20, top: 10, left: 12 }; // 아직 화면에 없음
+    metric = { w, lh: parseFloat(cs.lineHeight) || 20, top: parseFloat(cs.paddingTop) || 0, left: parseFloat(cs.paddingLeft) || 0 };
+    return metric;
+  }
+  function placeCursors() {
+    if (!cursors.length) { if (cursorLayer.firstChild) cursorLayer.replaceChildren(); return; }
+    const { w, lh, top, left } = measure();
+    const L = ta.value.split('\n');
+    cursorLayer.replaceChildren(...cursors.map((c) => {
+      let row = lineReal.findIndex((n, i) => n - 1 <= c.line && (i + 1 >= lineReal.length || lineReal[i + 1] - 1 > c.line));
+      if (row < 0) row = lineReal.length - 1;
+      const inFold = lineReal[row] - 1 !== c.line;
+      const text = L[row] || '';
+      const upto = inFold ? text.length : Math.min(c.col, text.length);
+      const cols = [...text.slice(0, upto)].reduce((n, ch) => n + (ch === '\t' ? 2 - (n % 2) : /[\u1100-\uffdc]/.test(ch) ? 2 : 1), 0);
+      return h('div', { class: `ed-cursor${row === 0 ? ' first' : ''}`, style: { left: `${left + cols * w}px`, top: `${top + row * lh}px`, height: `${lh}px`, '--c': c.color } }, h('span', { class: 'ed-cursor-name' }, c.name));
+    }));
+  }
+  const reportCursor = () => {
+    if (!onCursor || document.activeElement !== ta) return;
+    const pos = ta.selectionStart;
+    const before = ta.value.slice(0, pos);
+    const row = before.split('\n').length - 1;
+    onCursor((lineReal[row] || row + 1) - 1, pos - (before.lastIndexOf('\n') + 1));
+  };
+  for (const ev of ['keyup', 'click', 'input', 'focus']) ta.addEventListener(ev, reportCursor);
   ta.addEventListener('scroll', sync, { passive: true });
   ta.addEventListener('input', changed);
 
@@ -232,16 +377,28 @@ function createEditor({ onChange, onSave, onRun, readOnly, words }) {
   return {
     el,
     ta,
-    get value() { return ta.value; },
-    set(text, language) { lang = language; ta.value = text; lines = 0; paint(); ta.scrollTop = 0; ta.scrollLeft = 0; sync(); },
-    /** 내용만 바꾸고 커서 · 스크롤은 유지 (다른 사람의 수정 반영) */
-    update(text) { const s = ta.selectionStart; const top = ta.scrollTop; ta.value = text; paint(); ta.setSelectionRange(Math.min(s, text.length), Math.min(s, text.length)); ta.scrollTop = top; sync(); },
+    /** 전체 글 (접힌 부분도 포함) */
+    get value() { return real(); },
+    set(text, language) { lang = language; folds.clear(); ta.value = text; lastGood = text; gutterSig = ''; paint(); ta.scrollTop = 0; ta.scrollLeft = 0; sync(); },
+    /** 내용만 바꾸고 커서 · 스크롤은 유지 (다른 사람의 수정 반영). 접힌 곳은 펼쳐짐 */
+    update(text) { const s = ta.selectionStart; const top = ta.scrollTop; folds.clear(); ta.value = text; lastGood = text; paint(); ta.setSelectionRange(Math.min(s, text.length), Math.min(s, text.length)); ta.scrollTop = top; sync(); },
     selection() {
       const v = ta.value;
       const a = ta.selectionStart; const b = ta.selectionEnd;
-      return { text: v.slice(a, b), from: v.slice(0, a).split('\n').length, to: v.slice(0, b).split('\n').length };
+      const rowOf = (pos) => v.slice(0, pos).split('\n').length - 1;
+      return { text: folds.size ? expand(v.slice(a, b)) : v.slice(a, b), from: lineReal[rowOf(a)] || rowOf(a) + 1, to: lineReal[rowOf(b)] || rowOf(b) + 1 };
     },
+    /** 함께 보는 사람들의 커서 표시 */
+    setCursors(list) { cursors = list; placeCursors(); },
+    foldAll() { for (let pass = 0; pass < 2000; pass++) { const L = ta.value.split('\n'); const i = L.findIndex((l, k) => !markOf(l) && foldEnd(L, k) > k && indentOf(l) === 0); if (i < 0) break; fold(i); } },
+    unfoldAll,
+    get folded() { return folds.size; },
+    /** 지금 접혀 있는 블록의 시작 줄(실제 줄 번호) — 탭을 오갈 때 접은 상태를 되살리는 데 씀 */
+    foldLines() { return ta.value.split('\n').map((l, i) => (markOf(l) ? lineReal[i] || 0 : 0)).filter(Boolean); },
+    /** 실제 줄 번호들을 다시 접기 (아래쪽부터 접어야 위쪽 줄 번호가 밀리지 않음) */
+    foldAt(lines) { for (const n of [...lines].sort((a, b) => b - a)) if (n >= 1) fold(n - 1); },
     goto(line) {
+      unfoldAll();
       const rows = ta.value.split('\n');
       const pos = rows.slice(0, line - 1).join('\n').length + (line > 1 ? 1 : 0);
       ta.focus();
@@ -405,6 +562,7 @@ export function createIde(host) {
     onChange: (text) => { if (!st.active) return; st.buffers.set(st.active, text); renderTabs(); autosave(); },
     onSave: () => save(st.active),
     onRun: () => runProject(),
+    onCursor: throttle((line, col) => { if (st.active) data.sendWsCursor(host.roomId, st.active, line, col); }, 250),
     // 자동 완성 후보: 같은 프로젝트의 다른 파일에 나온 이름
     words: () => (st.project ? projectFiles().filter((f) => f.id !== st.active && !/\.circuit\.json$/.test(f.name)).slice(0, 40).map((f) => contentOf(f).slice(0, 20_000)) : []),
   });
@@ -510,6 +668,7 @@ export function createIde(host) {
         onInsertInclude: (header) => insertInclude(header),
         onGoto: (line) => { leave('ardu'); editor.goto(line); },
         onBack: () => leave('ardu'),
+        onShare: data.can('sendMessage') ? (text) => shareOutput(`${host.items.get(st.project)?.name || ''}/${host.items.get(st.arduFile)?.name || 'sketch.ino'} (시리얼 모니터)`, text) : null,
         saveCircuit,
       });
       arduEl.append(ardu.el);
@@ -683,17 +842,23 @@ export function createIde(host) {
   }
 
   // ── 탭 · 편집 ──
+  const foldsOf = new Map(); // 파일 id → 접어 둔 줄들 (탭을 오가도 접은 상태 유지)
   function openFile(id, line) {
     const f = host.items.get(id);
     if (!f || f.kind !== 'file') return;
     if (!st.tabs.includes(id)) st.tabs.push(id);
+    if (st.active && st.active !== id) foldsOf.set(st.active, editor.foldLines());
+    const same = st.active === id;
     st.active = id;
     st.remote.delete(id);
     for (let p = host.items.get(f.parentId); p && p.kind === 'folder'; p = host.items.get(p.parentId)) st.collapsed.delete(p.id);
     renderTabs();
     renderExplorer();
     showEditor();
+    const keep = same ? editor.foldLines() : foldsOf.get(id) || [];
     editor.set(contentOf(f), langFromName(f.name) || 'plaintext');
+    if (keep.length && !line) editor.foldAt(keep);
+    showCursors();
     if (line) editor.goto(line);
     if (isMobile() && st.explorerOpen) leave('explorer');
     data.sendWsFocus(host.roomId, id);
@@ -801,6 +966,12 @@ export function createIde(host) {
     openMenu(anchor, [
       st.active && data.can('sendMessage') ? { label: sel?.text ? `선택한 ${sel.to - sel.from + 1}줄을 채팅으로 보내기` : '이 파일을 채팅으로 보내기', icon: 'message', onClick: () => shareToChat() } : null,
       st.active ? { label: '버전 기록', icon: 'history', onClick: () => historyDialog(host.items.get(st.active)) } : null,
+      st.active ? { label: editor.folded ? '모두 펼치기' : '모두 접기 (함수 · 블록)', icon: 'chevronDown', onClick: () => (editor.folded ? editor.unfoldAll() : editor.foldAll()) } : null,
+      { label: '의존성 그래프 (파일들이 서로 불러오는 관계)', icon: 'share', onClick: () => depsDialog() },
+      st.active && data.aiEnabled ? { label: '✨ AI 코드 검토', icon: 'sparkle', onClick: () => aiCodeDialog('review') } : null,
+      st.active && data.aiEnabled ? { label: '✨ AI 에게 설명 듣기', icon: 'sparkle', onClick: () => aiCodeDialog('explain') } : null,
+      st.active && data.aiEnabled ? { label: '✨ AI 리팩터링 제안', icon: 'sparkle', onClick: () => aiCodeDialog('refactor') } : null,
+      'sep',
       { label: 'ZIP 으로 내보내기', icon: 'download', onClick: () => exportZip(p) },
       host.canEdit ? { label: '파일 가져오기', icon: 'clip', onClick: () => uploadInput.click() } : null,
       host.canEdit ? { label: '아두이노 스케치 추가 (.ino)', icon: 'chip', onClick: () => addSketch() } : null,
@@ -808,6 +979,99 @@ export function createIde(host) {
       { label: st.outOpen ? '실행 창 닫기' : '실행 창 열기', icon: 'play', onClick: () => toggleOut(!st.outOpen) },
     ]);
   }
+
+  // ── AI 코드 검토 · 설명 · 리팩터링 제안 (서버에 AI 가 설정되어 있을 때) ──
+  function aiCodeDialog(mode) {
+    const f = host.items.get(st.active);
+    if (!f) return;
+    const title = { review: 'AI 코드 검토', explain: 'AI 설명', refactor: 'AI 리팩터링 제안' }[mode];
+    const box = h('div', { class: 'ai-code' }, h('div', { class: 'spinner' }), h('p', { class: 'muted small' }, 'AI 가 코드를 읽는 중… (길면 1분쯤 걸릴 수 있습니다)'));
+    let answer = '';
+    const m = openModal({
+      title: `✨ ${title} · ${f.name}`, cls: 'ai-code-modal', body: [h('p', { class: 'muted small' }, 'AI 의 의견은 틀릴 수 있습니다. 제안은 자동으로 적용되지 않으니 직접 확인하고 고치세요.'), box],
+      actions: [{ label: '닫기' }, data.can('sendMessage') ? { label: '채팅으로 보내기', kind: 'secondary', onClick: guard(async () => { if (!answer) return false; await data.sendMessage(host.roomId, { content: `✨ **${title}** · ${pathOf(f)}\n${answer}`.slice(0, 3900) }); toast('채팅으로 보냈습니다.', 'success'); return undefined; }) } : null].filter(Boolean),
+    });
+    data.aiCode(host.roomId, { name: f.name, content: editor.value, mode }).then((r) => {
+      answer = r.text;
+      box.replaceChildren(h('div', { class: 'msg-text', html: renderMarkdown(r.text, {}) }));
+    }).catch((e) => { box.replaceChildren(h('p', { class: 'run-error' }, errorText(e))); });
+    void m;
+  }
+
+  // ── 의존성 그래프: 프로젝트 파일들이 서로 불러오는(import · include · script) 관계 ──
+  function depsOf(file) {
+    const path = pathOf(file);
+    const text = contentOf(file);
+    const lang = langFromName(file.name);
+    const specs = [];
+    const grab = (re, map = (x) => x) => { for (const m of text.matchAll(re)) specs.push(map(m[1])); };
+    if (lang === 'javascript' || lang === 'typescript') { grab(/(?:import|export)\s[^'"\n]*?from\s*['"]([^'"\n]+)['"]/g); grab(/import\s*\(?\s*['"]([^'"\n]+)['"]/g); grab(/require\(\s*['"]([^'"\n]+)['"]\s*\)/g); } else if (lang === 'html') { grab(/<script\b[^>]*\bsrc=['"]([^'"]+)['"]/gi); grab(/<link\b[^>]*\bhref=['"]([^'"]+)['"]/gi); } else if (lang === 'css') grab(/@import\s+(?:url\()?['"]([^'"]+)['"]/g);
+    else if (lang === 'python') { grab(/^\s*from\s+([.\w]+)\s+import/gm, (x) => `${x.replace(/^\./, './').replace(/\./g, '/').replace(/^\/\//, './')}.py`); grab(/^\s*import\s+([\w.]+)/gm, (x) => `${x.replace(/\./g, '/')}.py`); } else if (lang === 'c' || lang === 'cpp') grab(/^\s*#\s*include\s*"([^"]+)"/gm);
+    const found = []; let external = 0;
+    for (const spec of specs) {
+      if (/^[a-z]+:|^\/\//i.test(spec)) { external++; continue; }
+      const dep = fileAt(path, spec) || fileAt(path, `${spec}.js`) || fileAt(path, `${spec}/index.js`) || fileAt(path, `./${spec}`);
+      if (dep && dep.id !== file.id) { if (!found.includes(dep.id)) found.push(dep.id); } else if (!dep) external++;
+    }
+    return { found, external };
+  }
+  function depsDialog() {
+    const files = projectFiles().filter((f) => !/\.circuit\.json$/.test(f.name));
+    const deps = new Map(files.map((f) => [f.id, depsOf(f)]));
+    const used = new Set([...deps.values()].flatMap((d) => d.found));
+    // 깊이: 아무도 불러오지 않는 파일(시작점)이 왼쪽, 불려 가는 파일일수록 오른쪽
+    const depth = new Map();
+    const walk = (id, d, trail) => { if (trail.has(id)) return; if ((depth.get(id) ?? -1) >= d) return; depth.set(id, d); trail.add(id); for (const x of deps.get(id).found) walk(x, d + 1, trail); trail.delete(id); };
+    for (const f of files) if (!used.has(f.id)) walk(f.id, 0, new Set());
+    for (const f of files) if (!depth.has(f.id)) walk(f.id, 0, new Set()); // 서로만 부르는 파일들
+    const cols = [];
+    for (const f of files) { const d = Math.min(depth.get(f.id) || 0, 8); (cols[d] = cols[d] || []).push(f); }
+    const W = 170; const H = 30; const GX = 70; const GY = 14;
+    const pos = new Map();
+    cols.forEach((col, x) => col.forEach((f, y) => pos.set(f.id, { x: 10 + x * (W + GX), y: 10 + y * (H + GY) })));
+    const width = 20 + cols.length * (W + GX) - GX;
+    const height = 20 + Math.max(...cols.map((c) => c.length)) * (H + GY) - GY;
+    const NS = 'http://www.w3.org/2000/svg';
+    const s = (tag, attrs, ...kids) => { const n = document.createElementNS(NS, tag); for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, String(v)); n.append(...kids); return n; };
+    let m = null;
+    const svg = s('svg', { width, height, viewBox: `0 0 ${width} ${height}`, class: 'deps-svg' },
+      s('defs', {}, s('marker', { id: 'dep-arrow', viewBox: '0 0 10 10', refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: 'auto-start-reverse' }, s('path', { d: 'M0 0L10 5L0 10z', class: 'deps-arrow' }))));
+    let edges = 0;
+    for (const f of files) for (const to of deps.get(f.id).found) {
+      const a = pos.get(f.id); const b = pos.get(to);
+      if (!a || !b) continue;
+      edges++;
+      const back = b.x <= a.x;
+      const x1 = back ? a.x : a.x + W; const x2 = back ? b.x + W : b.x;
+      const bend = back ? -Math.max(40, Math.abs(a.y - b.y) / 2) : 0;
+      svg.append(s('path', { d: back ? `M${a.x + W / 2} ${a.y}C${a.x + W / 2} ${a.y + bend} ${b.x + W / 2} ${b.y + bend} ${b.x + W / 2} ${b.y}` : `M${x1} ${a.y + H / 2}C${x1 + GX / 2} ${a.y + H / 2} ${x2 - GX / 2} ${b.y + H / 2} ${x2} ${b.y + H / 2}`, class: `deps-edge${back ? ' back' : ''}`, 'marker-end': 'url(#dep-arrow)' }));
+    }
+    for (const f of files) {
+      const p = pos.get(f.id);
+      const g = s('g', { class: `deps-node${f.id === st.active ? ' active' : ''}`, transform: `translate(${p.x},${p.y})`, tabindex: 0, role: 'button' },
+        s('rect', { width: W, height: H, rx: 6 }), s('text', { x: 10, y: 19 }, pathOf(f).length > 24 ? `…${pathOf(f).slice(-23)}` : pathOf(f)));
+      g.append(s('title', {}, `${pathOf(f)} — 불러오는 파일 ${deps.get(f.id).found.length}개${deps.get(f.id).external ? `, 외부 ${deps.get(f.id).external}개` : ''}`));
+      g.addEventListener('click', () => { m.close(); openFile(f.id); });
+      svg.append(g);
+    }
+    const external = [...deps.values()].reduce((n, d) => n + d.external, 0);
+    m = openModal({
+      title: '의존성 그래프', cls: 'deps-modal',
+      body: [h('p', { class: 'muted small' }, `파일 ${files.length}개 · 연결 ${edges}개${external ? ` · 프로젝트 밖(라이브러리 · 외부 주소) ${external}개` : ''}. 화살표는 "불러오는 파일 → 불려 가는 파일" 방향입니다. 파일을 누르면 엽니다.`),
+        files.length ? h('div', { class: 'deps-scroll' }, svg) : h('p', { class: 'muted pad' }, '파일이 없습니다.')],
+      actions: [{ label: '닫기' }],
+    });
+  }
+
+  /** 실행 결과(콘솔 · 시리얼 출력)를 이 방의 채팅으로 */
+  const shareOutput = guard(async (title, text) => {
+    const out = (text || '').trim();
+    if (!out) return toast('보낼 출력이 없습니다. 먼저 실행해 보세요.', 'warn');
+    const tail = out.length > 1800 ? `…\n${out.slice(-1800)}` : out;
+    await data.sendMessage(host.roomId, { content: `▶ **${title}** 실행 결과\n\`\`\`\n${tail.replace(/```/g, "'''")}\n\`\`\`` });
+    toast('실행 결과를 채팅으로 보냈습니다.', 'success', 4000, { label: '채팅 열기', onClick: () => ctx.showRoomChat(host.roomId) });
+    return null;
+  });
 
   /** 코드와 대화 연결: 선택한 줄(또는 파일)을 줄 번호와 함께 이 방의 채팅으로 */
   const shareToChat = guard(async () => {
@@ -906,6 +1170,7 @@ export function createIde(host) {
     outEl.replaceChildren(
       h('div', { class: 'run-head' }, h('strong', {}, `▶ ${pathOf(target)}`), status,
         h('span', { class: 'run-actions' }, stopBtn,
+          data.can('sendMessage') ? h('button', { class: 'btn small ghost', title: '실행 결과를 이 방의 채팅으로 보내기', onclick: () => shareOutput(`${host.items.get(st.project)?.name || ''}/${pathOf(target)}`, [...log.children].map((x) => x.textContent).join('\n')) }, '채팅으로') : null,
           h('button', { class: 'btn small ghost', onclick: () => log.replaceChildren() }, '지우기'),
           h('button', { class: 'btn small ghost', onclick: () => toggleOut(false) }, '닫기'))),
       kind === 'html' ? preview : null, log);
@@ -924,10 +1189,22 @@ export function createIde(host) {
   // 다른 사람이 어떤 파일을 보고 있는지
   const offFocus = data.on('wsFocus', ({ roomId, id, userId }) => {
     if (roomId !== host.roomId) return;
-    if (id) st.focus.set(userId, { id, until: Date.now() + 60_000 }); else st.focus.delete(userId);
+    if (id) st.focus.set(userId, { id, until: Date.now() + 60_000 }); else { st.focus.delete(userId); cursorsOf.delete(userId); showCursors(); }
     if (st.project) renderExplorer();
   });
-  const focusTimer = setInterval(() => { if (st.project && st.active && document.visibilityState === 'visible') data.sendWsFocus(host.roomId, st.active); }, 30_000);
+  // 같은 파일을 함께 보는 사람의 커서 (30초 동안 움직임이 없으면 숨김)
+  const cursorsOf = new Map(); // userId → { id, line, col, at }
+  function showCursors() {
+    const now = Date.now();
+    editor.setCursors([...cursorsOf.entries()].filter(([, c]) => c.id === st.active && now - c.at < 30_000)
+      .map(([uid2, c]) => ({ line: c.line, col: c.col, name: data.user(uid2)?.nickname || '?', color: colorFor(uid2) })));
+  }
+  const offCursor = data.on('wsCursor', ({ roomId, id, userId, line, col }) => {
+    if (roomId !== host.roomId) return;
+    cursorsOf.set(userId, { id, line, col, at: Date.now() });
+    showCursors();
+  });
+  const focusTimer = setInterval(() => { showCursors(); if (st.project && st.active && document.visibilityState === 'visible') data.sendWsFocus(host.roomId, st.active); }, 30_000);
 
   return {
     el,
@@ -955,6 +1232,7 @@ export function createIde(host) {
       ardu?.stop({ quiet: true });
       clearInterval(focusTimer);
       offFocus();
+      offCursor();
       for (const id of st.tabs) if (dirty(id) && host.canEdit) save(id);
       data.sendWsFocus(host.roomId, null);
     },

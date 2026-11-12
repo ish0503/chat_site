@@ -53,7 +53,7 @@ async function open(user, name) {
   return page;
 }
 let failed = 0;
-const step = async (label, fn) => { try { await fn(); console.log('✔', label); } catch (e) { failed += 1; console.log('✖', label, e.message.split('\n')[0]); } };
+const step = async (label, fn) => { try { await fn(); console.log('✔', label); } catch (e) { failed += 1; console.log('✖', label, e.message.split('\n').slice(0, 3).join(' | ')); if (SHOTS) { await shot(a, `fail-a-${failed}`).catch(() => {}); await shot(b, `fail-b-${failed}`).catch(() => {}); } } };
 let a; let b;
 try {
   a = await open(A, 'alice');
@@ -361,13 +361,54 @@ try {
     await a.click('.project-card:has-text("웹 프로젝트")');
     await a.waitForSelector('.ide-project');
   });
+  await step('code room: folding keeps the real text, remote cursor, deps graph, run output to chat', async () => {
+    await a.click('.ide-explorer .ide-row:has-text("util.js")');
+    await a.waitForSelector('.ide-tab.active:has-text("util.js")');
+    await a.waitForSelector('.ed-gutter .ln.fold', { timeout: 3000 });
+    await a.click('.ed-gutter .ln.fold');
+    await a.waitForSelector('.ed-gutter .ln.folded');
+    const shown = await a.inputValue('.ed-input');
+    if (!/⋯ 1줄/.test(shown) || shown.includes('return x * 2')) throw new Error(`fold display: ${JSON.stringify(shown)}`);
+    await shot(a, 'ide-fold');
+    // 접힌 채로 저장 · 실행해도 원래 코드 그대로
+    await a.click('.ide-explorer .ide-row:has-text("calc.js")');
+    await a.click('.ide-bar button:has-text("실행")');
+    await a.waitForSelector('.ide-out .run-line:has-text("결과 42")', { timeout: 8000 });
+    await a.click('.ide-explorer .ide-row:has-text("util.js")');
+    await a.click('.ed-gutter .ln.folded');
+    const back = await a.inputValue('.ed-input');
+    if (back !== 'export function twice(x) {\n  return x * 2;\n}') throw new Error(`unfold: ${JSON.stringify(back)}`);
+    // 같은 파일을 보는 다른 사람의 커서
+    await b.click('.ide-explorer .ide-row:has-text("util.js")');
+    await b.click('.ed-input');
+    await b.keyboard.press('Control+Home');
+    await b.keyboard.press('ArrowDown');
+    await a.waitForSelector('.ed-cursor .ed-cursor-name:has-text("밥")', { timeout: 5000 });
+    await shot(a, 'ide-cursor');
+    // 의존성 그래프: calc.js → util.js
+    await a.click('button[aria-label="프로젝트 메뉴"]');
+    await a.click('.menu-item:has-text("의존성 그래프")');
+    await a.waitForSelector('.deps-modal .deps-node:has-text("calc.js")', { timeout: 3000 });
+    if (!(await a.locator('.deps-modal path.deps-edge').count())) throw new Error('no dependency edge');
+    await shot(a, 'ide-deps');
+    await a.keyboard.press('Escape');
+    // 실행 결과를 채팅으로
+    await a.click('.ide-explorer .ide-row:has-text("calc.js")');
+    await a.click('.ide-bar button:has-text("실행")');
+    await a.waitForSelector('.ide-out .run-line:has-text("결과 42")', { timeout: 8000 });
+    await a.click('.ide-out button:has-text("채팅으로")');
+    await a.click('.ws-chat-btn');
+    await a.waitForSelector('.chat-view .msg:has-text("실행 결과"):has-text("결과 42")', { timeout: 5000 });
+    await a.click('.ws-back-btn');
+    await a.waitForSelector('.ide-project');
+  });
   await step('code room: chat view and back to workspace', async () => {
     await a.click('.ws-chat-btn');
     await a.waitForSelector('.chat-view .msg:has-text("calc.js")', { timeout: 5000 });
     await a.click('.ws-back-btn');
     await a.waitForSelector('.ide-project');
   });
-  await step('board room: cards in all 7 views', async () => {
+  await step('board room: cards in the 7 basic views', async () => {
     await createRoom(a, '보드', '기획 보드');
     await a.waitForSelector('.view-tree', { timeout: 5000 });
     const addQuick = async (text) => { await a.fill('.quick-add-input >> nth=-1', text); await a.keyboard.press('Enter'); await a.waitForSelector(`.card:has-text("${text}")`); };
@@ -425,6 +466,71 @@ try {
     await shot(a, 'board-from-chat');
     await a.click('.view-branch .card:has-text("1번에 대한 답장") .card-chip.link');
     await a.waitForSelector('.chat-view .msg.flash:has-text("1번에 대한 답장")', { timeout: 5000 });
+  });
+  await step('board: table and calendar views, template export → import', async () => {
+    await a.click('.tree-row.board');
+    await a.click('.board-tab:has-text("표")');
+    await a.waitForSelector('.card-table tbody tr', { timeout: 5000 });
+    const row = a.locator('.card-table tbody tr', { hasText: '무역과 외교' });
+    await row.locator('select[aria-label="상태"]').selectOption('done');
+    await a.click('.board-tab:has-text("칸반")');
+    await a.waitForSelector('.kanban-col.st-done .card:has-text("무역과 외교")', { timeout: 5000 });
+    await a.click('.board-tab:has-text("표")');
+    await a.click('.card-table .th-btn:has-text("상태")');
+    await a.waitForSelector('.card-table th[aria-sort="ascending"]');
+    await shot(a, 'board-table');
+    await a.click('.board-tab:has-text("달력")');
+    await a.waitForSelector('.cal-cell.today .cal-card', { timeout: 5000 });
+    await shot(a, 'board-calendar');
+    await a.click('button[aria-label="다음 달"]');
+    await a.waitForFunction(() => !document.querySelector('.cal-cell.today:not(.other)'));
+    await a.click('.cal-head button:has-text("오늘")');
+    const before = await a.locator('.cal-cell.today .cal-card').count();
+    await a.hover('.cal-cell.today');
+    await a.click('.cal-cell.today .cal-day button');
+    await a.fill('.modal input.input', '달력에서 추가');
+    await a.click('.modal button.btn.primary');
+    await a.waitForFunction((n) => /\+\d+개/.test(document.querySelector('.cal-cell.today')?.textContent || '') || document.querySelectorAll('.cal-cell.today .cal-card').length > n, before, { timeout: 5000 });
+    // 템플릿: 내보낸 파일을 새 보드에 가져오면 같은 구조의 카드가 생김
+    const count = async () => Number((await a.textContent('.board-count')).match(/\d+/)[0]);
+    const n = await count();
+    const [dl] = await Promise.all([a.waitForEvent('download', { timeout: 5000 }), (async () => { await a.click('button[aria-label="보드 메뉴"]'); await a.click('.menu-item:has-text("템플릿으로 내보내기")'); })()]);
+    const file = await dl.path();
+    await createRoom(a, '보드', '복사한 보드');
+    await a.waitForSelector('.view-tree', { timeout: 5000 });
+    await a.waitForFunction(() => /카드 0개/.test(document.querySelector('.board-count')?.textContent || ''));
+    const [chooser] = await Promise.all([a.waitForEvent('filechooser', { timeout: 5000 }), (async () => { await a.click('button[aria-label="보드 메뉴"]'); await a.click('.menu-item:has-text("템플릿 가져오기")'); })()]);
+    await chooser.setFiles({ name: 'x.board.json', mimeType: 'application/json', buffer: readFileSync(file) });
+    await a.waitForFunction((k) => document.querySelector('.board-count')?.textContent.includes(`카드 ${k}개`), n, { timeout: 8000 });
+    await a.waitForSelector('.view-tree .tree-card-row[style*="22px"] .card:has-text("전쟁 시뮬레이션")');
+  });
+  await step('tasks from chat → kanban cards, message chip follows card status both ways', async () => {
+    await a.click('.tree-row.text');
+    const send = async (text) => { await a.fill('.composer-input', text); await a.keyboard.press('Enter'); await a.waitForSelector(`.msg:has-text("${text}")`); };
+    await send('발표 자료 만들어야 해');
+    await send('TODO: 회의실 예약');
+    await send('오늘 날씨 좋다');
+    await a.click('.tree-row.text', { button: 'right' });
+    await a.click('.menu-item:has-text("대화에서 할 일 뽑기")');
+    await a.waitForSelector('.convert-modal');
+    await a.click('.convert-modal button.btn.primary');
+    await a.waitForSelector('.convert-row:has-text("발표 자료")', { timeout: 5000 });
+    if (await a.locator('.convert-row:has-text("날씨")').count()) throw new Error('non-task line became a card');
+    await shot(a, 'tasks');
+    await a.click('.convert-modal button.btn.primary');
+    await a.waitForSelector('.view-kanban .kanban-col.st-todo .card:has-text("회의실 예약")', { timeout: 8000 });
+    // 보드에서 상태를 바꾸면 원본 메시지의 칩이 따라감
+    await a.click('.kanban-col.st-todo .card:has-text("회의실 예약") button[title="진행 중(으)로"]');
+    await b.click('.tree-row.text');
+    await b.waitForSelector('.msg:has-text("회의실 예약") .msg-card:has-text("진행 중")', { timeout: 5000 });
+    // 메시지의 칩에서 상태를 바꾸면 보드 카드가 따라감
+    await b.click('.msg:has-text("회의실 예약") .msg-card');
+    await b.click('.menu-item:has-text("상태: 완료")');
+    await a.waitForSelector('.view-kanban .kanban-col.st-done .card:has-text("회의실 예약")', { timeout: 5000 });
+    await b.waitForSelector('.msg:has-text("회의실 예약") .msg-card.st-done', { timeout: 5000 });
+    await shot(b, 'msg-card');
+    await a.click('.tree-row.text');
+    await a.waitForSelector('.chat-view .composer-input');
   });
   await step('iPhone layout: composer sits at the bottom, page cannot shift up', async () => {
     const { devices } = createRequire(import.meta.url)('playwright');

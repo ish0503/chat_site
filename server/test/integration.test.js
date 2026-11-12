@@ -318,6 +318,55 @@ test('작업 공간: 코드 파일 저장 · 동시 편집 충돌 · 버전 기�
   assert.equal((await A.req('ws:list', { roomId })).error, 'room_not_found');
 });
 
+test('메시지 ↔ 보드 카드 양방향 연결 · 커서 공유 · 새 보기 · AI 코드 검토(꺼짐)', async () => {
+  await sleep(1200);
+  const board = (await A.req('node:create', { type: 'board', name: '연결 보드', view: 'table' })).node;
+  assert.equal(board.view, 'table');
+  assert.equal((await A.req('node:update', { id: board.id, view: 'calendar' })).node.view, 'calendar');
+  const mid = uuid();
+  await A.req('msg:send', { id: mid, roomId, content: '로그인 화면 만들어야 해' });
+  const card = uuid();
+  // 메시지에서 만든 카드 → 그 메시지에 '보드 카드' 표시가 붙어 채팅에서도 상태가 보임
+  B.events.length = 0;
+  await A.req('ws:putMany', { roomId: board.id, items: [{ id: card, kind: 'card', text: '로그인 화면 만들어야 해', msgId: mid, status: 'todo' }] });
+  const tagged = await B.waitFor('msg:upsert', (m) => m.id === mid && m.cards?.length === 1);
+  assert.deepEqual(tagged.cards, [{ id: card, roomId: board.id, status: 'todo', stance: null }]);
+  // 카드 상태를 바꾸면 메시지의 표시도 바뀜 (카드 → 메시지)
+  await B.req('ws:put', { roomId: board.id, item: { id: card, kind: 'card', status: 'done' } });
+  assert.equal((await A.waitFor('msg:upsert', (m) => m.id === mid && m.cards?.[0]?.status === 'done')).cards[0].status, 'done');
+  // 메시지를 고치면 카드 글도 따라 바뀜 (메시지 → 카드)
+  await A.req('msg:edit', { id: mid, content: '로그인 화면 만들어야 해 (금요일까지)' });
+  const followed = await B.waitFor('ws:upsert', (e) => e.roomId === board.id && e.items.some((i) => i.id === card && i.text.includes('금요일')));
+  assert.equal(followed.items[0].status, 'done', '상태는 그대로');
+  // 카드 글을 직접 고친 뒤에는 메시지를 따라가지 않음
+  await B.req('ws:put', { roomId: board.id, item: { id: card, kind: 'card', text: '로그인 화면 (디자인 포함)' } });
+  await A.req('msg:edit', { id: mid, content: '로그인 화면 만들자' });
+  await sleep(150);
+  assert.equal((await A.req('ws:list', { roomId: board.id })).items.find((i) => i.id === card).text, '로그인 화면 (디자인 포함)');
+  // 카드를 지우면 메시지의 표시가 사라지고, 메시지를 지우면 카드는 남되 연결만 끊김
+  const card2 = uuid();
+  await A.req('ws:put', { roomId: board.id, item: { id: card2, kind: 'card', text: '두 번째 카드', msgId: mid } });
+  await A.req('ws:delete', { roomId: board.id, ids: [card] });
+  const one = await B.waitFor('msg:upsert', (m) => m.id === mid && m.cards?.length === 1 && m.cards[0].id === card2);
+  assert.equal(one.cards[0].id, card2);
+  await A.req('msg:delete', { id: mid });
+  await sleep(150);
+  const left = (await A.req('ws:list', { roomId: board.id })).items.find((i) => i.id === card2);
+  assert.equal(left.msgId, null);
+  assert.equal(left.text, '두 번째 카드');
+  // 커서 위치는 다른 사람에게만 전달
+  const code = (await A.req('node:create', { type: 'code', name: '커서방' })).node;
+  const fid = uuid();
+  B.events.length = 0; A.events.length = 0;
+  A.s.emit('ws:cursor', { roomId: code.id, id: fid, line: 3, col: 7 });
+  assert.deepEqual(await B.waitFor('ws:cursor', (e) => e.id === fid), { roomId: code.id, id: fid, userId: alice.user.id, line: 3, col: 7 });
+  assert.equal(A.events.filter((e) => e.name === 'ws:cursor').length, 0);
+  // AI 가 꺼져 있으면 코드 검토도 꺼짐
+  assert.equal((await A.req('ai:code', { roomId: code.id, name: 'a.js', content: 'x', mode: 'review' })).error, 'ai_disabled');
+  await A.req('node:delete', { id: board.id });
+  await A.req('node:delete', { id: code.id });
+});
+
 test('작업 공간: 보드 카드와 방 삭제 시 정리', async () => {
   const room = (await A.req('node:create', { type: 'board', name: '보드', view: 'kanban' })).node;
   assert.equal(room.view, 'kanban');

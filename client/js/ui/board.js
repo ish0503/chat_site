@@ -1,10 +1,10 @@
-// 보드 방: 같은 카드들을 여러 방식으로 보기 (트리 · 포스트잇 · 마인드맵 · 브랜치 · 칸반 · 타임라인 · 토론)
+// 보드 방: 같은 카드들을 여러 방식으로 보기 (트리 · 포스트잇 · 마인드맵 · 브랜치 · 칸반 · 타임라인 · 토론 · 표 · 달력)
 // 카드는 하나의 데이터(작업 공간 항목 kind: 'card')이고 보기만 바뀌므로, 한 보기에서 고치면 다른 보기에도 그대로 반영됩니다.
 import {
   h, toast, uid, fmtStamp, fmtDate, sameDay, fmtTime, isTouch,
 } from '../util.js';
 import { renderMarkdown } from '../markdown.js';
-import { messagesToCards, draftToCards } from '../convert.js';
+import { messagesToCards, messagesToTasks, draftToCards } from '../convert.js';
 import { icon } from './icons.js';
 import { openModal, openMenu, confirmDialog, field } from './common.js';
 import { errorText } from './errors.js';
@@ -17,6 +17,8 @@ export const BOARD_VIEWS = {
   kanban: { label: '칸반', emoji: '📋', desc: '할 일 · 진행 · 완료' },
   timeline: { label: '타임라인', emoji: '🕒', desc: '시간 순서대로' },
   debate: { label: '토론', emoji: '⚖️', desc: '찬성 · 반대 나누기' },
+  table: { label: '표', emoji: '📊', desc: '한 줄씩 정렬 · 바로 고치기' },
+  calendar: { label: '달력', emoji: '📅', desc: '날짜별로 한 달 보기' },
 };
 const STATUS = { todo: '할 일', doing: '진행 중', review: '검토', done: '완료' };
 const STANCE = { pro: '👍 찬성', con: '👎 반대', neutral: '💬 기타' };
@@ -418,8 +420,113 @@ export function createBoard(host) {
     }) : empty('쟁점(질문)을 적고, 찬성 · 반대 의견을 나눠 적어 보세요.'), quickAdd('새 쟁점 추가 (Enter)', {}, 'wide'));
   }
 
+  // ───────── 8. 표 ─────────
+  let sort = { key: 'order', dir: 1 };
+  function renderTable() {
+    const list = cards();
+    if (!list.length) return h('div', { class: 'view-table' }, empty('카드를 한 줄씩 표로 봅니다. 상태 · 입장 · 날짜를 표에서 바로 고칠 수 있어요.'), quickAdd('새 카드 추가 (Enter)', {}, 'wide'));
+    const val = {
+      order: (c) => c.order || 0, text: (c) => (c.text || '').toLowerCase(), status: (c) => Object.keys(STATUS).indexOf(c.status),
+      stance: (c) => Object.keys(STANCE).indexOf(c.stance), date: timeOf, parent: (c) => (host.items.get(c.parentId)?.text || '').toLowerCase(),
+    };
+    const get = val[sort.key] || val.order;
+    list.sort((a, b) => { const x = get(a); const y = get(b); return (x < y ? -1 : x > y ? 1 : 0) * sort.dir || byOrder(a, b); });
+    const th = (key, label) => h('th', { scope: 'col', 'aria-sort': sort.key === key ? (sort.dir > 0 ? 'ascending' : 'descending') : 'none' },
+      h('button', { type: 'button', class: 'th-btn', onclick: () => { sort = { key, dir: sort.key === key ? -sort.dir : 1 }; render(); } }, label, sort.key === key ? (sort.dir > 0 ? ' ▲' : ' ▼') : ''));
+    const pick = (opts, value, onPick, label) => (host.canEdit
+      ? h('select', { class: 'input cell-sel', 'aria-label': label, onchange: (e) => onPick(e.target.value || null) }, h('option', { value: '' }, '—'), Object.entries(opts).map(([k, l]) => h('option', { value: k, selected: value === k }, l)))
+      : h('span', {}, opts[value] || '—'));
+    const day = (t) => new Date(t - new Date(t).getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+    return h('div', { class: 'view-table' },
+      h('div', { class: 'table-scroll' }, h('table', { class: 'card-table' },
+        h('thead', {}, h('tr', {}, th('text', '내용'), th('status', '상태'), th('stance', '입장'), th('date', '날짜'), th('parent', '상위 카드'), h('th', {}))),
+        h('tbody', {}, list.map((c) => h('tr', { dataset: { id: c.id } },
+          h('td', { class: 'cell-text', onclick: () => editDialog(c) }, c.color ? h('span', { class: 'cell-dot', style: { background: c.color } }) : null, (c.text || '').replace(/\s+/g, ' ').slice(0, 200)),
+          h('td', {}, pick(STATUS, c.status, (v) => put({ id: c.id, status: v }), '상태')),
+          h('td', {}, pick(STANCE, c.stance, (v) => put({ id: c.id, stance: v }), '입장')),
+          h('td', {}, host.canEdit ? h('input', {
+            class: 'input cell-sel', type: 'date', value: day(timeOf(c)), 'aria-label': '날짜',
+            onchange: (e) => { const [y, m, d] = e.target.value.split('-').map(Number); if (y) { const old = new Date(timeOf(c)); put({ id: c.id, date: new Date(y, m - 1, d, old.getHours(), old.getMinutes()).getTime() }); } },
+          }) : fmtDate(timeOf(c))),
+          h('td', { class: 'muted small ellipsis cell-parent' }, (host.items.get(c.parentId)?.text || '').replace(/\s+/g, ' ').slice(0, 40)),
+          h('td', {}, host.canEdit ? btn('trash', '삭제', () => removeCard(c)) : null)))))),
+      quickAdd('새 카드 추가 (Enter)', {}, 'wide'));
+  }
+
+  // ───────── 9. 달력 ─────────
+  let month = null; // 보고 있는 달의 1일
+  function renderCalendar() {
+    if (!month) { const n = new Date(); month = new Date(n.getFullYear(), n.getMonth(), 1); }
+    const y = month.getFullYear(); const mo = month.getMonth();
+    const first = new Date(y, mo, 1);
+    const start = new Date(y, mo, 1 - first.getDay());
+    const today = new Date();
+    const all = cards();
+    const cells = [];
+    for (let i = 0; i < 42; i += 1) {
+      const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
+      if (i >= 35 && d.getMonth() !== mo) break;
+      const mine = all.filter((c) => sameDay(timeOf(c), d.getTime())).sort((a, b) => timeOf(a) - timeOf(b));
+      const at = () => { const n = new Date(); return new Date(d.getFullYear(), d.getMonth(), d.getDate(), n.getHours(), n.getMinutes()).getTime(); };
+      cells.push(h('div', {
+        class: `cal-cell${d.getMonth() !== mo ? ' other' : ''}${sameDay(d.getTime(), today.getTime()) ? ' today' : ''}`, dataset: { day: `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}` },
+        ondragover: (e) => { if (host.canEdit && e.dataTransfer.types.includes('text/x-card')) e.preventDefault(); },
+        ondrop: (e) => { const c = host.items.get(e.dataTransfer.getData('text/x-card')); if (c) { const old = new Date(timeOf(c)); put({ id: c.id, date: new Date(d.getFullYear(), d.getMonth(), d.getDate(), old.getHours(), old.getMinutes()).getTime() }); } },
+      },
+      h('div', { class: 'cal-day' }, h('span', {}, String(d.getDate())), host.canEdit ? btn('plus', `${d.getMonth() + 1}월 ${d.getDate()}일에 카드 추가`, () => addChildPrompt(null, { date: at() })) : null),
+      mine.slice(0, 4).map((c) => h('button', {
+        type: 'button', class: `cal-card st-${c.status || 'none'}`, title: c.text || '', style: c.color ? { borderLeftColor: c.color } : null,
+        draggable: host.canEdit && !isTouch() ? 'true' : null, ondragstart: (e) => e.dataTransfer.setData('text/x-card', c.id),
+        onclick: () => editDialog(c),
+      }, (c.text || '').replace(/\s+/g, ' ').slice(0, 40))),
+      mine.length > 4 ? h('span', { class: 'muted small' }, `+${mine.length - 4}개`) : null));
+    }
+    const go = (n) => { month = new Date(y, mo + n, 1); render(); };
+    return h('div', { class: 'view-calendar' },
+      h('div', { class: 'cal-head' },
+        h('button', { class: 'icon-btn', type: 'button', 'aria-label': '이전 달', onclick: () => go(-1) }, icon('chevronLeft')),
+        h('strong', { class: 'cal-title' }, `${y}년 ${mo + 1}월`),
+        h('button', { class: 'icon-btn', type: 'button', 'aria-label': '다음 달', onclick: () => go(1) }, icon('chevron')),
+        h('button', { class: 'btn small ghost', type: 'button', onclick: () => { month = null; render(); } }, '오늘')),
+      h('div', { class: 'cal-grid' }, ['일', '월', '화', '수', '목', '금', '토'].map((w) => h('div', { class: 'cal-week muted small' }, w)), cells));
+  }
+
+  // ───────── 템플릿: 보드의 카드 구조를 파일로 내보내고 다른 보드에 가져오기 ─────────
+  const TEMPLATE_FIELDS = ['text', 'color', 'status', 'stance', 'x', 'y', 'order'];
+  function exportTemplate() {
+    const list = cards().sort(byOrder);
+    const tpl = { type: 'chat-site-board', version: 1, name: data.nodes.get(host.roomId)?.name || '', view, cards: list.map((c) => ({ key: c.id, parent: c.parentId && host.items.has(c.parentId) ? c.parentId : null, ...Object.fromEntries(TEMPLATE_FIELDS.filter((k) => c[k] != null).map((k) => [k, c[k]])) })) };
+    const a = h('a', { href: URL.createObjectURL(new Blob([JSON.stringify(tpl, null, 2)], { type: 'application/json' })), download: `${tpl.name || 'board'}.board.json` });
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
+  }
+  function importTemplate() {
+    const input = h('input', { type: 'file', accept: '.json,application/json', hidden: true });
+    input.addEventListener('change', guard(async () => {
+      const file = input.files[0];
+      input.remove();
+      if (!file) return;
+      let tpl;
+      try { tpl = JSON.parse(await file.text()); } catch { tpl = null; }
+      const src = Array.isArray(tpl?.cards) ? tpl.cards.filter((c) => c && typeof c.text === 'string' && c.text.trim()).slice(0, 500) : [];
+      if (tpl?.type !== 'chat-site-board' || !src.length) { toast('보드 템플릿 파일이 아닙니다. (보드 메뉴의 "템플릿으로 내보내기"로 만든 .board.json 파일)', 'warn'); return; }
+      const ids = new Map(src.map((c) => [c.key, uid()]));
+      const t = Date.now();
+      const sorted = [...src].sort((a, b) => (a.order || 0) - (b.order || 0));
+      await data.putWsMany(host.roomId, sorted.map((c, i) => ({
+        id: ids.get(c.key), kind: 'card', text: c.text.trim().slice(0, 2000), parentId: ids.get(c.parent) || null, order: t + i, date: t + i,
+        ...(typeof c.color === 'string' && /^#[0-9a-f]{3,8}$/i.test(c.color) ? { color: c.color } : {}),
+        ...(STATUS[c.status] ? { status: c.status } : {}), ...(STANCE[c.stance] ? { stance: c.stance } : {}),
+        ...(Number.isFinite(c.x) && Number.isFinite(c.y) ? { x: c.x, y: c.y } : {}),
+      })));
+      toast(`카드 ${src.length}개를 가져왔습니다.`, 'success');
+    }));
+    document.body.append(input);
+    input.click();
+  }
+
   const RENDER = {
-    tree: renderTree, sticky: renderSticky, mindmap: renderMindmap, branch: renderBranch, kanban: renderKanban, timeline: renderTimeline, debate: renderDebate,
+    tree: renderTree, sticky: renderSticky, mindmap: renderMindmap, branch: renderBranch, kanban: renderKanban, timeline: renderTimeline, debate: renderDebate, table: renderTable, calendar: renderCalendar,
   };
 
   function render() {
@@ -434,6 +541,8 @@ export function createBoard(host) {
       class: 'icon-btn', 'aria-label': '보드 메뉴', onclick: (e) => openMenu(e.currentTarget, [
         data.can('manageNodes') && room?.view !== view ? { label: `'${BOARD_VIEWS[view].label}'을(를) 이 방의 기본 보기로`, icon: 'check', onClick: guard(() => data.updateNode(host.roomId, { view })) } : null,
         { label: '카드 내용 복사 (목록)', icon: 'copy', onClick: () => navigator.clipboard?.writeText(outline()).then(() => toast('복사했습니다.')) },
+        cards().length ? { label: '템플릿으로 내보내기 (.board.json)', icon: 'download', onClick: exportTemplate } : null,
+        host.canEdit ? { label: '템플릿 가져오기', icon: 'plus', onClick: importTemplate } : null,
         data.can('sendMessage') ? { label: '정리한 내용을 채팅으로 보내기', icon: 'send', onClick: guard(async () => { await data.sendMessage(host.roomId, { content: `📋 **보드 정리**\n${outline()}`.slice(0, 4000) }); toast('채팅으로 보냈습니다.'); }) } : null,
         host.canEdit && cards().length ? { label: '카드 모두 지우기', icon: 'trash', danger: true, onClick: async () => { if (await confirmDialog({ title: '카드 모두 지우기', message: `카드 ${cards().length}개를 모두 지울까요? 원본 채팅 메시지는 지워지지 않습니다.`, confirmText: '지우기', danger: true })) guard(() => data.deleteWs(host.roomId, cards().map((c) => c.id)))(); } } : null,
       ]),
@@ -468,7 +577,7 @@ export function createBoard(host) {
  * roomId: 원본 대화가 있는 방. messages: 변환할 메시지(없으면 최근 대화). target: 카드를 넣을 보드 방(없으면 고름).
  * 원본 메시지는 바꾸지 않고, 미리 본 뒤 고른 카드만 만듭니다.
  */
-export async function convertDialog(ctx, { roomId, messages = null, target = null }) {
+export async function convertDialog(ctx, { roomId, messages = null, target = null, tasks = false }) {
   const { data } = ctx;
   if (!data.can('editWorkspace')) return toast(errorText({ code: 'forbidden' }), 'warn');
   let source = messages;
@@ -481,7 +590,7 @@ export async function convertDialog(ctx, { roomId, messages = null, target = nul
   const canCreate = data.can('manageNodes');
   if (!target && !boards.length && !canCreate) return toast('카드를 넣을 보드 방이 없습니다.', 'warn');
 
-  let method = 'rule';
+  let method = tasks ? 'tasks' : 'rule';
   let draft = null; // 미리 보기 카드 [{id, parentId, text, …, on}]
   const srcRoom = data.nodes.get(roomId);
   const viewSel = h('select', { class: 'input' }, Object.entries(BOARD_VIEWS).map(([k, v]) => h('option', { value: k }, `${v.emoji} ${v.label} — ${v.desc}`)));
@@ -491,11 +600,13 @@ export async function convertDialog(ctx, { roomId, messages = null, target = nul
   const methodRow = h('div', { class: 'tpl-picker' });
   const preview = h('div', { class: 'convert-preview' });
   const step2 = h('div', { hidden: true }, h('p', { class: 'muted small' }, '만들 카드를 확인하세요. 체크를 끄면 그 카드는 만들지 않습니다. 만든 뒤에도 자유롭게 고칠 수 있어요.'), preview);
+  if (tasks) { viewSel.value = 'kanban'; name.value = `${data.roomLabel(srcRoom) || '대화'} 할 일`; }
   const syncTarget = () => { nameField.hidden = !!targetSel.value; };
   targetSel.addEventListener('change', syncTarget);
   syncTarget();
   const renderMethod = () => methodRow.replaceChildren(...[
     ['rule', '규칙으로 변환', '메시지마다 카드 하나, 답장은 하위 카드로'],
+    ['tasks', '☑ 할 일만 뽑기', '해야 할 일 · 체크 목록을 찾아 칸반 카드로'],
     ...(data.aiEnabled ? [['ai', '✨ AI로 정리', '주제별로 묶고 할 일 · 찬반을 분류']] : []),
   ].map(([k, label, desc]) => h('button', { type: 'button', class: `type-opt${k === method ? ' active' : ''}`, onclick: () => { method = k; draft = null; step2.hidden = true; renderMethod(); } }, h('span', { class: 'type-name' }, label), h('span', { class: 'type-desc' }, desc))));
   renderMethod();
@@ -519,6 +630,10 @@ export async function convertDialog(ctx, { roomId, messages = null, target = nul
       const res = await data.aiBoard(roomId, { messageIds: messages ? source.map((m) => m.id) : null, view: viewSel.value });
       draft = draftToCards(res.cards);
       if (res.title && !targetSel.value && name.value.endsWith(' 정리')) name.value = res.title;
+    } else if (method === 'tasks') {
+      draft = messagesToTasks(source, { nameOf: (m) => (data.user(m.authorId) || m.author)?.nickname || '' });
+      if (!draft.length) { draft = null; step2.hidden = true; toast('할 일처럼 보이는 메시지를 찾지 못했습니다. ("~해야 해", "- [ ] 할 일" 같은 표현을 찾습니다)', 'warn'); return; }
+      viewSel.value = 'kanban';
     } else draft = messagesToCards(source, { nameOf: (m) => (data.user(m.authorId) || m.author)?.nickname || '' });
     renderPreview();
   }
@@ -539,6 +654,7 @@ export async function convertDialog(ctx, { roomId, messages = null, target = nul
         onClick: async () => {
           try {
             if (!draft) { await makeDraft(); return false; } // 첫 번째: 미리 보기, 두 번째: 승인해서 만들기
+            if (!draft) return false;
             const chosen = draft.filter((c) => c.on !== false);
             if (!chosen.length) { toast('만들 카드를 하나 이상 고르세요.', 'warn'); return false; }
             const ids = new Set(chosen.map((c) => c.id));
