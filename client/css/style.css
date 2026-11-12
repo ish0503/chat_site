@@ -1092,6 +1092,10 @@ body.resizing { cursor: col-resize; user-select: none; }
 .ed-hl code { font: inherit; background: none; padding: 0; }
 .ed-input { background: transparent; color: transparent; caret-color: var(--text-strong); resize: none; outline: none; -webkit-text-fill-color: transparent; }
 .ed-input::selection { background: rgba(88, 101, 242, 0.35); }
+.ed-suggest { position: absolute; z-index: 4; min-width: 150px; max-width: 320px; background: var(--bg-float); border: 1px solid var(--border); border-radius: 6px; box-shadow: var(--shadow); padding: 3px; display: flex; flex-direction: column; }
+.ed-suggest[hidden] { display: none; }
+.ed-suggest-item { text-align: left; padding: 3px 8px; border-radius: 4px; font: 13px/1.5 var(--mono); color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ed-suggest-item.active, .ed-suggest-item:hover { background: var(--accent-soft); color: var(--text-strong); }
 
 /* ── 보드 ── */
 .board-view { flex: 1; min-height: 0; display: flex; flex-direction: column; }

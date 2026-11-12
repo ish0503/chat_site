@@ -1015,12 +1015,19 @@ export class DataService extends Emitter {
     if (!this.can('editWorkspace')) throw new OpError('forbidden');
     const t = Date.now();
     const out = [];
-    for (let i = 0; i < items.length; i += 200) {
-      const chunk = items.slice(i, i + 200);
-      const local = chunk.map((it, k) => ({
-        roomId, parentId: null, name: '', order: t + i + k, createdBy: this.me.id, createdAt: t, rev: 0, updatedBy: this.me.id, updatedAt: t, ...it,
+    // 서버는 부모가 먼저 있어야 저장하므로 (구조 검사), 부모 → 자식 순서로 보냄. 화면에서의 순서(order)는 원래 순서 그대로
+    const numbered = items.map((it, k) => ({ order: t + k, ...it }));
+    const byId = new Map(numbered.map((it) => [it.id, it]));
+    const sorted = [];
+    const seen = new Set();
+    const visit = (it) => { if (seen.has(it.id)) return; seen.add(it.id); const p = byId.get(it.parentId); if (p) visit(p); sorted.push(it); };
+    numbered.forEach(visit);
+    for (let i = 0; i < sorted.length; i += 200) {
+      const chunk = sorted.slice(i, i + 200);
+      const local = chunk.map((it) => ({
+        roomId, parentId: null, name: '', createdBy: this.me.id, createdAt: t, rev: 0, updatedBy: this.me.id, updatedAt: t, ...it,
       }));
-      const res = await this.#mutate('ws:putMany', { roomId, items: chunk.map((it, k) => ({ order: t + i + k, ...it })) }, () => this.#applyWs(roomId, local, { by: this.me.id, broadcast: true }));
+      const res = await this.#mutate('ws:putMany', { roomId, items: chunk }, () => this.#applyWs(roomId, local, { by: this.me.id, broadcast: true }));
       if (res?.items) await this.#applyWs(roomId, res.items, { by: this.me.id });
       out.push(...(res?.items || local));
     }

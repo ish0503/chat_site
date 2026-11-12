@@ -275,6 +275,38 @@ test('작업 공간: 코드 파일 저장 · 동시 편집 충돌 · 버전 기�
   const sub = uuid();
   await A.req('ws:put', { roomId: room.id, item: { id: sub, kind: 'folder', name: 'sub', parentId: dir } });
   assert.equal((await A.req('ws:put', { roomId: room.id, item: { id: dir, kind: 'folder', parentId: sub } })).error, 'invalid_move');
+  // 구조 검사: 방 종류에 맞는 항목만, 부모는 같은 방에 실제로 있어야 하고 종류가 맞아야 함
+  await sleep(1500); // 요청 제한(초당 15개)에 걸리지 않게 잠깐 쉼
+  const put = (r, item) => r.req('ws:put', { roomId: room.id, item });
+  assert.equal((await put(A, { id: uuid(), kind: 'card', text: '코드방에 카드' })).error, 'invalid_kind');
+  assert.equal((await put(A, { id: uuid(), kind: 'file', name: 'a.js' })).error, 'invalid_parent', '파일은 프로젝트나 폴더 안에');
+  assert.equal((await put(A, { id: uuid(), kind: 'file', name: 'a.js', parentId: uuid() })).error, 'invalid_parent', '없는 부모');
+  assert.equal((await put(A, { id: uuid(), kind: 'folder', name: 'x', parentId: file })).error, 'invalid_parent', '파일 안에는 넣을 수 없음');
+  assert.equal((await put(A, { id: uuid(), kind: 'project', name: 'p', parentId: dir })).error, 'invalid_parent', '프로젝트는 최상위');
+  assert.equal((await put(A, { id: file, kind: 'file', parentId: uuid() })).error, 'invalid_parent', '없는 폴더로 옮기기');
+  assert.equal((await put(A, { id: dir, kind: 'folder', parentId: dir })).error, 'invalid_move');
+  await sleep(800);
+  // 다른 방의 폴더를 부모로 쓸 수 없고, 다른 방의 항목 id 를 덮어쓸 수 없음
+  const other = (await A.req('node:create', { type: 'code', name: '다른 코드방' })).node;
+  const [op, od] = [uuid(), uuid()];
+  await A.req('ws:putMany', { roomId: other.id, items: [{ id: op, kind: 'project', name: 'B' }, { id: od, kind: 'folder', name: 'lib', parentId: op }] });
+  assert.equal((await put(A, { id: uuid(), kind: 'file', name: 'cross.js', parentId: od })).error, 'invalid_parent');
+  assert.equal((await put(A, { id: file, kind: 'file', parentId: od })).error, 'invalid_parent');
+  assert.equal((await put(A, { id: od, kind: 'folder', name: '가로채기', parentId: proj })).error, 'conflict');
+  await sleep(800);
+  // 일괄 저장은 전체를 먼저 검사: 하나라도 잘못되면 아무것도 저장되지 않음
+  const before = (await A.req('ws:list', { roomId: room.id })).items.length;
+  const [g1, g2] = [uuid(), uuid()];
+  const bad = await A.req('ws:putMany', { roomId: room.id, items: [{ id: g1, kind: 'folder', name: 'ok', parentId: proj }, { id: g2, kind: 'file', name: 'bad.js', parentId: uuid() }] });
+  assert.equal(bad.error, 'invalid_parent');
+  assert.equal((await A.req('ws:list', { roomId: room.id })).items.length, before);
+  // 같은 묶음 안의 앞 항목을 부모로 쓰는 것은 됨 (순서가 뒤바뀌면 안 됨)
+  assert.equal((await A.req('ws:putMany', { roomId: room.id, items: [{ id: g2, kind: 'file', name: 'x.js', parentId: g1 }, { id: g1, kind: 'folder', name: 'ok', parentId: proj }] })).error, 'invalid_parent');
+  assert.equal((await A.req('ws:putMany', { roomId: room.id, items: [{ id: g1, kind: 'folder', name: 'ok', parentId: proj }, { id: g2, kind: 'file', name: 'x.js', parentId: g1 }] })).items.length, 2);
+  await A.req('ws:delete', { roomId: room.id, ids: [g1] });
+  // 부모를 건드리지 않는 수정은 그대로 됨
+  assert.equal((await put(A, { id: file, kind: 'file', content: 'console.log(4)' })).ok, true);
+  await A.req('node:delete', { id: other.id });
   // 이름의 경로 문자는 바뀜, 채팅도 가능
   const renamed = await A.req('ws:put', { roomId: room.id, item: { id: file, kind: 'file', name: '../evil.js' } });
   assert.equal(renamed.item.name, '.._evil.js');
@@ -297,6 +329,13 @@ test('작업 공간: 보드 카드와 방 삭제 시 정리', async () => {
   const moved = await B.req('ws:put', { roomId: room.id, item: { id: c1, kind: 'card', status: 'done' } });
   assert.equal(moved.item.status, 'done');
   assert.equal(moved.item.text, '주제', '보내지 않은 값은 그대로');
+  await sleep(800);
+  // 보드에는 카드만, 카드의 부모는 같은 보드의 카드만
+  const bput = (item) => A.req('ws:put', { roomId: room.id, item });
+  assert.equal((await bput({ id: uuid(), kind: 'project', name: '보드에 프로젝트' })).error, 'invalid_kind');
+  assert.equal((await bput({ id: uuid(), kind: 'card', text: '고아', parentId: uuid() })).error, 'invalid_parent');
+  assert.equal((await bput({ id: c1, kind: 'card', parentId: c2 })).error, 'invalid_move');
+  assert.equal((await bput({ id: c2, kind: 'card', parentId: null })).item.parentId, null, '최상위로 꺼내기');
   assert.equal((await A.req('node:update', { id: room.id, view: 'mindmap' })).node.view, 'mindmap');
   await A.req('node:delete', { id: room.id });
   assert.equal((await A.req('ws:list', { roomId: room.id })).error, 'room_not_found');

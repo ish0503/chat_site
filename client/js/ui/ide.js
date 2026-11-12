@@ -55,12 +55,24 @@ const ext = (name) => (name.includes('.') ? name.split('.').pop().toLowerCase() 
 const b64 = (s) => btoa(String.fromCharCode(...new TextEncoder().encode(s)));
 
 // ───────── 편집기 (구문 강조 층 위에 투명한 입력창을 겹침) ─────────
-function createEditor({ onChange, onSave, onRun, readOnly }) {
+// 자동 완성에 쓰는 언어별 낱말 (자주 쓰는 예약어 · 함수). 여기에 더해 프로젝트 파일에 나온 이름도 함께 제안함
+const COMPLETIONS = {
+  javascript: 'const let var function return if else for while do switch case break continue class extends new this import export from default async await try catch finally throw typeof instanceof null undefined true false console.log console.error document.getElementById document.querySelector document.createElement addEventListener setTimeout setInterval clearTimeout clearInterval JSON.stringify JSON.parse Math.floor Math.round Math.random Math.max Math.min Object.keys Array.from Promise.all parseInt parseFloat length forEach filter reduce includes indexOf push slice splice'.split(' '),
+  python: 'def return if elif else for while in not and or is import from as class try except finally raise with lambda pass break continue global None True False print len range str int float list dict set tuple input open enumerate zip sorted append extend items keys values join split strip format isinstance __init__ self'.split(' '),
+  cpp: 'void int long float double bool char byte unsigned const static volatile String if else for while do switch case break continue return struct class public private #include #define setup loop pinMode digitalWrite digitalRead analogRead analogWrite delay delayMicroseconds millis micros Serial.begin Serial.print Serial.println Serial.available Serial.read Serial.readStringUntil HIGH LOW INPUT OUTPUT INPUT_PULLUP LED_BUILTIN map constrain random randomSeed tone noTone pulseIn attachInterrupt digitalPinToInterrupt Wire.begin Wire.beginTransmission Wire.endTransmission Wire.requestFrom Wire.write Wire.read sizeof true false'.split(' '),
+  html: 'html head body title meta link script style div span button input label form table img href src class id onclick charset viewport stylesheet'.split(' '),
+  css: 'display flex grid block none position absolute relative fixed margin padding border background color font-size font-weight width height max-width min-height align-items justify-content gap border-radius box-shadow transition transform opacity overflow cursor pointer'.split(' '),
+};
+COMPLETIONS.typescript = COMPLETIONS.javascript;
+COMPLETIONS.c = COMPLETIONS.cpp;
+
+function createEditor({ onChange, onSave, onRun, readOnly, words }) {
   const ta = h('textarea', { class: 'ed-input', spellcheck: 'false', autocapitalize: 'off', autocomplete: 'off', autocorrect: 'off', wrap: 'off', 'aria-label': '코드 편집기', readonly: readOnly });
   const code = h('code', {});
   const pre = h('pre', { class: 'ed-hl', 'aria-hidden': 'true' }, code);
   const gutter = h('div', { class: 'ed-gutter', 'aria-hidden': 'true' });
-  const el = h('div', { class: 'editor' }, gutter, h('div', { class: 'ed-body' }, pre, ta));
+  const suggest = h('div', { class: 'ed-suggest', role: 'listbox', hidden: true });
+  const el = h('div', { class: 'editor' }, gutter, h('div', { class: 'ed-body' }, pre, ta, suggest));
   let lang = null;
   let hl = null;
   let lines = 0;
@@ -91,11 +103,88 @@ function createEditor({ onChange, onSave, onRun, readOnly }) {
   }
   const lineStart = (pos) => ta.value.lastIndexOf('\n', pos - 1) + 1;
 
+  // ── 자동 완성: 두 글자 이상 치면 언어의 낱말 + 프로젝트에 나온 이름을 제안 (↑↓ 고르기, Enter · Tab 넣기, Esc 닫기, Ctrl+Space 로 직접 열기) ──
+  const ac = { items: [], index: 0, picked: false, quiet: false };
+  let charW = 0;
+  let wordCache = { at: 0, list: [] };
+  const closeSuggest = () => { ac.items = []; suggest.hidden = true; };
+  const projectWords = () => {
+    if (Date.now() - wordCache.at > 4000) {
+      const text = `${ta.value}\n${(words?.() || []).join('\n')}`.slice(0, 400_000);
+      wordCache = { at: Date.now(), list: [...new Set(text.match(/[A-Za-z_][A-Za-z0-9_]{2,}/g) || [])] };
+    }
+    return wordCache.list;
+  };
+  function openSuggest(force = false) {
+    if (readOnly || ta.selectionStart !== ta.selectionEnd) return closeSuggest();
+    const pos = ta.selectionStart;
+    const line = ta.value.slice(lineStart(pos), pos);
+    if (/[A-Za-z0-9_]/.test(ta.value[pos] || '')) return closeSuggest(); // 낱말 한가운데에서는 띄우지 않음
+    const full = (/[A-Za-z_#][\w.]*$/.exec(line) || [''])[0];
+    const tail = (/[A-Za-z_#]\w*$/.exec(line) || [''])[0];
+    if (!force && tail.length < 2) return closeSuggest();
+    const known = COMPLETIONS[lang] || [];
+    const low = (x) => x.toLowerCase();
+    const out = [];
+    const add = (word, from) => { if (word !== full && word !== tail && !out.some((o) => o.word === word)) out.push({ word, from }); };
+    if (full.includes('.')) for (const w of known) if (low(w).startsWith(low(full))) add(w, pos - full.length);
+    for (const w of known) if (tail && low(w).startsWith(low(tail))) add(w, pos - tail.length);
+    for (const w of projectWords()) { if (out.length >= 8) break; if (tail && w.startsWith(tail)) add(w, pos - tail.length); }
+    if (force && !tail) for (const w of known.slice(0, 8)) add(w, pos);
+    ac.items = out.slice(0, 8);
+    ac.index = 0;
+    ac.picked = false;
+    if (!ac.items.length) return closeSuggest();
+    // 커서 위치 (고정 폭 글꼴이므로 줄 · 칸으로 계산)
+    if (!charW) { const probe = h('span', { style: { position: 'absolute', visibility: 'hidden', whiteSpace: 'pre', font: getComputedStyle(ta).font } }, 'M'.repeat(40)); el.append(probe); charW = probe.getBoundingClientRect().width / 40 || 8; probe.remove(); }
+    const cs = getComputedStyle(ta);
+    const lh = parseFloat(cs.lineHeight) || 20;
+    const cols = [...line].reduce((n, ch) => n + (ch === '\t' ? 2 - (n % 2) : /[\u1100-\uffdc]/.test(ch) ? 2 : 1), 0);
+    const row = ta.value.slice(0, pos).split('\n').length;
+    const top = parseFloat(cs.paddingTop) + row * lh - ta.scrollTop;
+    const left = parseFloat(cs.paddingLeft) + cols * charW - ta.scrollLeft;
+    suggest.hidden = false;
+    renderSuggest();
+    const box = ta.getBoundingClientRect();
+    const below = top + suggest.offsetHeight < box.height;
+    suggest.style.top = `${below ? top + 2 : Math.max(0, top - lh - suggest.offsetHeight - 2)}px`;
+    suggest.style.left = `${Math.max(0, Math.min(left, box.width - suggest.offsetWidth - 4))}px`;
+    return undefined;
+  }
+  function renderSuggest() {
+    suggest.replaceChildren(...ac.items.map((it, i) => h('button', {
+      type: 'button', role: 'option', 'aria-selected': String(i === ac.index), class: `ed-suggest-item${i === ac.index ? ' active' : ''}`,
+      onmousedown: (e) => { e.preventDefault(); ac.index = i; acceptSuggest(); },
+    }, it.word)));
+  }
+  function acceptSuggest() {
+    const it = ac.items[ac.index];
+    if (!it) return;
+    const pos = ta.selectionStart;
+    closeSuggest();
+    ac.quiet = true; // 넣은 직후에는 다시 띄우지 않음
+    replace(it.from, pos, it.word, it.from + it.word.length);
+    ac.quiet = false;
+  }
+  ta.addEventListener('input', (e) => { if (e.isComposing || ac.quiet) closeSuggest(); else if (e.inputType === 'insertText' || e.inputType === 'deleteContentBackward') openSuggest(); else closeSuggest(); });
+  ta.addEventListener('blur', () => setTimeout(closeSuggest, 120));
+  ta.addEventListener('scroll', closeSuggest, { passive: true });
+  ta.addEventListener('pointerdown', closeSuggest);
+
   ta.addEventListener('keydown', (e) => {
     const mod = e.ctrlKey || e.metaKey;
     if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); onSave?.(); return; }
     if (mod && e.key === 'Enter') { e.preventDefault(); onRun?.(); return; }
     if (readOnly) return;
+    if (e.ctrlKey && e.key === ' ') { e.preventDefault(); openSuggest(true); return; }
+    if (ac.items.length && !e.isComposing) {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); ac.index = (ac.index + (e.key === 'ArrowDown' ? 1 : -1) + ac.items.length) % ac.items.length; ac.picked = true; renderSuggest(); return; }
+      // Tab 은 바로 넣고, Enter 는 ↑↓ 로 고른 뒤에만 넣음 (그냥 줄을 바꾸려는 Enter 를 가로채지 않게)
+      if ((e.key === 'Tab' || (e.key === 'Enter' && ac.picked)) && !mod && !e.shiftKey) { e.preventDefault(); acceptSuggest(); return; }
+      if (e.key === 'Enter') closeSuggest();
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeSuggest(); return; }
+      if (['ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown'].includes(e.key)) closeSuggest();
+    }
     const s = ta.selectionStart;
     const en = ta.selectionEnd;
     const v = ta.value;
@@ -316,6 +405,8 @@ export function createIde(host) {
     onChange: (text) => { if (!st.active) return; st.buffers.set(st.active, text); renderTabs(); autosave(); },
     onSave: () => save(st.active),
     onRun: () => runProject(),
+    // 자동 완성 후보: 같은 프로젝트의 다른 파일에 나온 이름
+    words: () => (st.project ? projectFiles().filter((f) => f.id !== st.active && !/\.circuit\.json$/.test(f.name)).slice(0, 40).map((f) => contentOf(f).slice(0, 20_000)) : []),
   });
   const explorer = h('div', { class: 'ide-explorer', role: 'tree', 'aria-label': '파일 탐색기' });
   const tabsEl = h('div', { class: 'ide-tabs', role: 'tablist' });
@@ -642,7 +733,7 @@ export function createIde(host) {
     if (st.active) { if (editorWrap.firstChild !== editor.el) editorWrap.replaceChildren(editor.el); return; }
     editorWrap.replaceChildren(h('div', { class: 'empty' }, icon('file', 40), h('h3', {}, '파일을 선택하세요'),
       h('p', { class: 'muted' }, '왼쪽 탐색기에서 파일을 열거나 새 파일을 만드세요.'),
-      h('p', { class: 'muted small' }, 'Ctrl+S 저장 · Ctrl+Enter 실행 · Ctrl+/ 주석 · Tab 들여쓰기')));
+      h('p', { class: 'muted small' }, 'Ctrl+S 저장 · Ctrl+Enter 실행 · Ctrl+/ 주석 · Tab 들여쓰기 · Ctrl+Space 자동 완성')));
   }
 
   async function save(id) {

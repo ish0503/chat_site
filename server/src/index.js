@@ -27,6 +27,10 @@ const NODE_TYPES = ['folder', 'text', 'voice', 'code', 'board'];
 // 메시지를 주고받을 수 있는 방: 일반 채팅방, 1:1 대화, 코드 작업실, 보드 방 (작업 공간에도 채팅이 딸려 있음)
 const CHAT_TYPES = ['text', 'dm', 'code', 'board'];
 const WORKSPACE_TYPES = ['code', 'board'];
+// 작업 공간 항목의 구조 규칙: 방 종류마다 만들 수 있는 항목, 항목마다 둘 수 있는 부모
+const WS_ROOM_KINDS = { code: ['project', 'folder', 'file'], board: ['card'] };
+const WS_PARENT_KINDS = { project: [], folder: ['project', 'folder'], file: ['project', 'folder'], card: ['card'] };
+const WS_NEEDS_PARENT = { folder: true, file: true };
 const BOARD_VIEWS = ['tree', 'sticky', 'mindmap', 'branch', 'kanban', 'timeline', 'debate'];
 // 작업 공간 항목: 코드 작업실의 프로젝트·폴더·파일, 보드 방의 카드
 const WS_KINDS = ['project', 'folder', 'file', 'card'];
@@ -1172,13 +1176,47 @@ io.on('connection', (socket) => {
     }
     return set;
   }
-  /** 항목 하나 저장 (없으면 만들고 있으면 고침). 반환: { doc, conflict } */
+  /**
+   * 저장하기 전 구조 검사에 쓰는 정보: 이 방의 항목(id → { kind, parentId })과, 같은 id 로 다른 방에 이미 있는 항목.
+   * 여러 항목을 한 번에 저장할 때는 앞 항목을 적용한 결과 위에서 다음 항목을 검사하므로, 폴더와 그 안의 파일을 함께 보낼 수 있음.
+   */
+  async function wsView(roomId, list) {
+    const all = await ws().find({ roomId }, { projection: { kind: 1, parentId: 1 } }).toArray();
+    const ids = list.map((x) => x?.id).filter(validId);
+    const same = ids.length ? await ws().find({ _id: { $in: ids } }, { projection: { roomId: 1 } }).toArray() : [];
+    return { known: new Set(all.map((x) => x._id)), items: new Map(all.map((x) => [x._id, { kind: x.kind, parentId: x.parentId ?? null }])), foreign: new Set(same.filter((x) => x.roomId !== roomId).map((x) => x._id)) };
+  }
+  /**
+   * 항목 하나의 구조 검사 (통과하면 view 에 반영). 데이터가 엉키지 않도록:
+   *  · 방 종류에 맞는 항목만 (코드 작업실: 프로젝트 · 폴더 · 파일 / 보드: 카드)
+   *  · 부모는 같은 방에 실제로 있어야 하고, 종류가 맞아야 함 (파일 · 폴더 → 프로젝트 · 폴더 / 카드 → 카드 / 프로젝트는 최상위)
+   *  · 자기 자신이나 자기 하위 항목 안으로 옮길 수 없음
+   */
+  function wsValidate(room, src, view) {
+    if (!src || !validId(src.id) || !WS_KINDS.includes(src.kind)) throw fail('invalid_item');
+    if (!WS_ROOM_KINDS[room.type]?.includes(src.kind)) throw fail('invalid_kind');
+    if (view.foreign.has(src.id)) throw fail('conflict', 409);
+    const cur = view.items.get(src.id);
+    if (cur && cur.kind !== src.kind) throw fail('conflict', 409);
+    if (cur && src.parentId === undefined) return; // 부모를 바꾸지 않는 수정 (내용 · 이름 등)
+    const parentId = validId(src.parentId) ? src.parentId : null;
+    if (cur && parentId === cur.parentId) return;
+    const parent = parentId ? view.items.get(parentId) : null;
+    if (parentId && !parent) throw fail('invalid_parent');
+    if (parent ? !WS_PARENT_KINDS[src.kind].includes(parent.kind) : WS_NEEDS_PARENT[src.kind]) throw fail('invalid_parent');
+    let steps = 0;
+    for (let at = parentId; at; at = view.items.get(at)?.parentId) { if (at === src.id) throw fail('invalid_move'); if (++steps > 5000) throw fail('invalid_move'); }
+    view.items.set(src.id, { kind: src.kind, parentId });
+  }
+
+  /** 항목 하나 저장 (없으면 만들고 있으면 고침). 구조 검사(wsValidate)를 통과한 뒤에 부름. 반환: { doc, conflict } */
   async function wsSave(roomId, src) {
     if (!src || !validId(src.id) || !WS_KINDS.includes(src.kind)) throw fail('invalid_item');
     const existing = await ws().findOne({ _id: src.id });
     const t = Date.now();
     if (!existing) {
       const fields = wsFields(src, src.kind);
+      if (src.kind === 'project') fields.parentId = null;
       if (src.kind !== 'card' && !fields.name) throw fail('invalid_name');
       const doc = {
         _id: src.id, roomId, kind: src.kind, parentId: null, name: '', order: t, ...fields, createdBy: userId, createdAt: t, updatedBy: userId, updatedAt: t, rev: 1,
@@ -1188,13 +1226,8 @@ io.on('connection', (socket) => {
     }
     if (existing.roomId !== roomId || existing.kind !== src.kind) throw fail('conflict', 409);
     const set = wsFields(src, existing.kind);
+    if (existing.kind === 'project') delete set.parentId; // 프로젝트는 항상 최상위
     if (set.name === '' && existing.kind !== 'card') delete set.name;
-    // 자기 자신이나 자기 하위 항목 안으로는 옮길 수 없음
-    if (set.parentId && set.parentId !== existing.parentId) {
-      const all = await ws().find({ roomId }, { projection: { parentId: 1 } }).toArray();
-      const byId = new Map(all.map((x) => [x._id, x]));
-      for (let cur = byId.get(set.parentId); cur; cur = byId.get(cur.parentId)) if (cur._id === existing._id) throw fail('invalid_move');
-    }
     // 동시 편집: 내가 보던 버전(baseRev) 이후 다른 사람이 내용을 바꿨으면 conflict 로 알림. 덮어쓴 내용은 버전 기록에 남음
     const changed = set.content !== undefined && set.content !== existing.content;
     const conflict = changed && Number.isFinite(Number(src.baseRev)) && Number(src.baseRev) !== existing.rev;
@@ -1215,7 +1248,9 @@ io.on('connection', (socket) => {
   });
 
   on('ws:put', { perm: 'editWorkspace' }, async ({ roomId, item }) => {
-    await accessWorkspace(roomId);
+    const room = await accessWorkspace(roomId);
+    const view = await wsView(roomId, [item]);
+    wsValidate(room, item, view);
     if (!(await ws().findOne({ _id: item?.id }, { projection: { _id: 1 } })) && (await ws().countDocuments({ roomId })) >= WS_LIMITS.perRoom) throw fail('workspace_full', 413);
     const { doc, conflict } = await wsSave(roomId, item);
     io.emit('ws:upsert', { roomId, items: [wsOut(doc)], by: userId });
@@ -1224,8 +1259,12 @@ io.on('connection', (socket) => {
 
   // 여러 항목 한 번에 (프로젝트 템플릿, 파일 가져오기, 대화 → 보드 변환)
   on('ws:putMany', { perm: 'editWorkspace', cost: 5 }, async ({ roomId, items }) => {
-    await accessWorkspace(roomId);
+    const room = await accessWorkspace(roomId);
     const list = Array.isArray(items) ? items.slice(0, WS_LIMITS.batch) : [];
+    // 전체를 먼저 검사: 하나라도 잘못되면 아무것도 저장하지 않음 (반쯤 저장된 프로젝트가 남지 않게)
+    const view = await wsView(roomId, list);
+    for (const it of list) wsValidate(room, it, view);
+    for (const it of list) if (it.kind !== 'card' && !view.known.has(it.id) && !cleanStr(it.name, WS_LIMITS.name)) throw fail('invalid_name'); // 새 항목은 이름이 있어야 함
     if ((await ws().countDocuments({ roomId })) + list.length > WS_LIMITS.perRoom) throw fail('workspace_full', 413);
     const saved = [];
     for (const it of list) saved.push(wsOut((await wsSave(roomId, it)).doc));

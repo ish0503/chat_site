@@ -291,6 +291,28 @@ try {
     const listing = execFileSync('python3', ['-c', 'import zipfile,sys;print("\\n".join(zipfile.ZipFile(sys.argv[1]).namelist()))', await dl.path()]).toString();
     if (!listing.includes('웹 프로젝트/lib/util.js') || !listing.includes('웹 프로젝트/index.html')) throw new Error(`zip: ${listing}`);
   });
+  await step('code room: autocomplete suggests language words and project names', async () => {
+    await a.click('.ide-row:has-text("main.js")');
+    await a.click('.ed-input');
+    await a.keyboard.press('Control+End');
+    await a.keyboard.press('Enter');
+    await a.keyboard.type('cons');
+    await a.waitForSelector('.ed-suggest:not([hidden]) .ed-suggest-item:has-text("console.log")', { timeout: 3000 });
+    await shot(a, 'ide-autocomplete');
+    await a.keyboard.press('ArrowDown');
+    await a.keyboard.press('ArrowUp');
+    await a.keyboard.press('Tab');
+    await a.waitForSelector('.ed-suggest', { state: 'hidden' });
+    const text = await a.locator('.ed-input').inputValue();
+    if (!/\n(const|console\.log|console\.error)$/.test(text)) throw new Error(`not completed: ${JSON.stringify(text.slice(-30))}`);
+    // Enter 는 고르지 않았으면 줄만 바꿈
+    await a.keyboard.press('Enter');
+    await a.keyboard.type('docu');
+    await a.waitForSelector('.ed-suggest:not([hidden])');
+    await a.keyboard.press('Enter');
+    if (!(await a.locator('.ed-input').inputValue()).endsWith('docu\n')) throw new Error('enter was captured');
+    await a.keyboard.press('Control+z'); await a.keyboard.press('Control+z'); await a.keyboard.press('Control+z'); await a.keyboard.press('Control+z'); await a.keyboard.press('Control+z');
+  });
   await step('arduino: sketch project, simulator run, serial monitor, add a sensor', async () => {
     await a.click('.ide-bar button[aria-label="뒤로"]');
     await a.click('.ide-home button:has-text("아두이노")');
