@@ -584,7 +584,7 @@ export async function convertDialog(ctx, { roomId, messages = null, target = nul
   let method = tasks ? 'tasks' : 'rule';
   let draft = null; // 미리 보기 카드 [{id, parentId, text, …, on}]
   const srcRoom = data.nodes.get(roomId);
-  const viewSel = h('select', { class: 'input' }, Object.entries(BOARD_VIEWS).map(([k, v]) => h('option', { value: k }, `${v.emoji} ${v.label} — ${v.desc}`)));
+  const viewSel = h('select', { class: 'input board-kind-select', 'aria-label': '새 보드 종류' }, Object.entries(BOARD_VIEWS).map(([k, v]) => h('option', { value: k }, `${v.emoji} ${v.label} — ${v.desc}`)));
   const targetSel = h('select', { class: 'input' }, canCreate ? h('option', { value: '' }, '＋ 새 보드 방 만들기') : null, boards.map((b) => h('option', { value: b.id, selected: b.id === target }, `${BOARD_VIEWS[boardKind(b)].emoji} ${b.name} (${BOARD_VIEWS[boardKind(b)].label})`)));
   const name = h('input', { class: 'input', maxlength: '100', value: `${data.roomLabel(srcRoom) || '대화'} 정리` });
   const nameField = h('div', {}, field('새 보드 종류', viewSel, '보드 종류는 만든 뒤에 바꿀 수 없습니다. 다른 형식이 필요하면 새 보드를 만드세요.'), field('새 보드 방 이름', name));
