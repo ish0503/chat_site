@@ -322,7 +322,7 @@ test('메시지 ↔ 보드 카드 양방향 연결 · 커서 공유 · 새 보�
   await sleep(1200);
   const board = (await A.req('node:create', { type: 'board', name: '연결 보드', view: 'table' })).node;
   assert.equal(board.view, 'table');
-  assert.equal((await A.req('node:update', { id: board.id, view: 'calendar' })).node.view, 'calendar');
+  assert.equal((await A.req('node:update', { id: board.id, view: 'calendar' })).node.view, 'table', '보드 종류는 만든 뒤 바뀌지 않음');
   const mid = uuid();
   await A.req('msg:send', { id: mid, roomId, content: '로그인 화면 만들어야 해' });
   const card = uuid();
@@ -385,7 +385,8 @@ test('작업 공간: 보드 카드와 방 삭제 시 정리', async () => {
   assert.equal((await bput({ id: uuid(), kind: 'card', text: '고아', parentId: uuid() })).error, 'invalid_parent');
   assert.equal((await bput({ id: c1, kind: 'card', parentId: c2 })).error, 'invalid_move');
   assert.equal((await bput({ id: c2, kind: 'card', parentId: null })).item.parentId, null, '최상위로 꺼내기');
-  assert.equal((await A.req('node:update', { id: room.id, view: 'mindmap' })).node.view, 'mindmap');
+  assert.equal((await A.req('node:update', { id: room.id, view: 'mindmap' })).node.view, 'kanban');
+  assert.equal((await A.req('node:create', { type: 'board', name: '기본 보드' })).node.view, 'tree');
   await A.req('node:delete', { id: room.id });
   assert.equal((await A.req('ws:list', { roomId: room.id })).error, 'room_not_found');
   assert.equal((await A.req('ai:board', { roomId })).error, 'ai_disabled');

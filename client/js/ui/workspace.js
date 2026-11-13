@@ -4,7 +4,7 @@ import { icon } from './icons.js';
 import { openModal, field } from './common.js';
 import { errorText } from './errors.js';
 import { createIde } from './ide.js';
-import { createBoard } from './board.js';
+import { createBoard, BOARD_VIEWS, boardKind } from './board.js';
 
 export function createWorkspaceView(ctx) {
   const { data } = ctx;
@@ -28,7 +28,7 @@ export function createWorkspaceView(ctx) {
     if (!room) return;
     title.replaceChildren(room.emoji ? h('span', { class: 'room-emoji' }, room.emoji) : icon(room.type === 'code' ? 'code' : 'grid', 22, 'dim'),
       h('div', { class: 'room-title-text' }, h('h2', { class: 'ellipsis' }, room.name),
-        h('span', { class: 'room-topic ellipsis' }, [room.type === 'code' ? '코드 작업실' : '보드', room.topic, data.can('editWorkspace') ? null : '보기 전용 (로그인하면 편집 가능)'].filter(Boolean).join(' · '))));
+        h('span', { class: 'room-topic ellipsis' }, [room.type === 'code' ? '코드 작업실' : `${BOARD_VIEWS[boardKind(room)].label} 보드`, room.topic, data.can('editWorkspace') ? null : '보기 전용 (로그인하면 편집 가능)'].filter(Boolean).join(' · '))));
     const n = ctx.unread.get(st.roomId) || 0;
     const badge = chatBtn.querySelector('.unread-badge');
     badge.hidden = !n;

@@ -1128,6 +1128,13 @@ body.resizing { cursor: col-resize; user-select: none; }
 .board-tab { flex: none; padding: 6px 10px; border-radius: 6px; font-size: 13px; color: var(--muted); white-space: nowrap; }
 .board-tab:hover { background: var(--hover); color: var(--text); }
 .board-tab.active { background: var(--accent-soft); color: var(--text-strong); font-weight: 600; }
+.board-kind { flex: none; padding: 6px 4px; font-size: 14px; font-weight: 600; color: var(--text-strong); white-space: nowrap; }
+.board-kind-desc { min-width: 0; flex: 0 1 auto; }
+.board-kind-picker { grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 6px; }
+.board-kind-picker .type-opt { display: grid; grid-template-columns: auto 1fr; column-gap: 6px; align-items: center; text-align: left; padding: 6px 8px; }
+.board-kind-picker .type-desc { grid-column: 2; font-size: 11px; }
+.board-kind-emoji { grid-row: span 2; font-size: 20px; line-height: 1; }
+@media (max-width: 600px) { .board-kind-desc { display: none; } }
 .board-count { white-space: nowrap; padding: 0 6px; }
 .board-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 .board-body > * { flex: 1; min-height: 0; }

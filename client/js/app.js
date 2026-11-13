@@ -5,6 +5,7 @@ import {
 import { loadSession, saveSession, clearSession } from './auth.js';
 import { DataService, isChatRoom, isWorkspace } from './data.js';
 import { createWorkspaceView } from './ui/workspace.js';
+import { BOARD_VIEWS, boardKind } from './ui/board.js';
 import * as errorlog from './errorlog.js';
 import { CallManager } from './call.js';
 import { mentionsMe } from './markdown.js';
@@ -503,7 +504,7 @@ function start(session) {
 
   // ───────── 통합 탐색: 방 · 사람 · 메시지 · 파일 (Ctrl/⌘+K 는 방·사람, Ctrl/⌘+Shift+F 는 전체) ─────────
   const pathOf = (n) => { if (n.type === 'dm') return '1:1 대화'; const p = []; for (let c = data.nodes.get(n.parentId); c; c = data.nodes.get(c.parentId)) p.unshift(c.name); return p.join(' / '); };
-  const roomIcon = (n) => (n.type === 'dm' ? avatar(data.dmPartner(n), 18, { presence: data.presenceOf(data.dmPartner(n).id) }) : n.emoji ? h('span', {}, n.emoji) : icon({ voice: 'voice', code: 'code', board: 'grid' }[n.type] || 'hash', 16));
+  const roomIcon = (n) => (n.type === 'dm' ? avatar(data.dmPartner(n), 18, { presence: data.presenceOf(data.dmPartner(n).id) }) : n.emoji ? h('span', {}, n.emoji) : n.type === 'board' ? h('span', {}, BOARD_VIEWS[boardKind(n)].emoji) : icon({ voice: 'voice', code: 'code', board: 'grid' }[n.type] || 'hash', 16));
   function unifiedSearch({ full = false, title = full ? '통합 탐색' : '빠른 이동', onPickRoom = null, exclude = [] } = {}) {
     const input = h('input', { class: 'input', placeholder: full ? '방, 사람, 메시지, 파일 찾기' : '방 · 사람 이름', autofocus: true, 'aria-label': '검색' });
     const results = h('div', { class: 'qs-results', role: 'listbox' });

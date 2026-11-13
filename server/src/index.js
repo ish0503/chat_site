@@ -556,12 +556,12 @@ const lastSent = new Map(); // `${roomId}:${userId}` → 마지막 전송 시각
 const presenceOf = new Map(); // userId → presence
 const visibleOnline = () => [...onlineCount.keys()].filter((id) => presenceOf.get(id) !== 'invisible');
 
-/** 방 설정 값 정리 (이모지, 색상, 공지 전용, 슬로우 모드) */
-function roomSettings(src, type) {
+/** 방 설정 값 정리 (이모지, 색상, 공지 전용, 슬로우 모드). 보드 종류(view)는 만들 때만 정하고 바꿀 수 없음 */
+function roomSettings(src, type, { create = false } = {}) {
   const set = {};
   if (src.emoji !== undefined) set.emoji = cleanStr(src.emoji, LIMITS.emoji);
   if (src.color !== undefined) set.color = HEX_COLOR.test(src.color || '') ? src.color : null;
-  if (type === 'board' && src.view !== undefined) set.view = BOARD_VIEWS.includes(src.view) ? src.view : 'tree';
+  if (type === 'board' && create) set.view = BOARD_VIEWS.includes(src.view) ? src.view : 'tree';
   if (type === 'text') {
     if (src.readonly !== undefined) set.readonly = !!src.readonly;
     if (src.slowmode !== undefined) set.slowmode = Math.max(0, Math.min(21600, Math.floor(Number(src.slowmode) || 0)));
@@ -719,7 +719,7 @@ io.on('connection', (socket) => {
     }
     const doc = {
       _id, type, name: nm, parentId, topic: cleanStr(topic, LIMITS.topic), order: ord,
-      createdBy: userId, createdAt: Date.now(), updatedAt: Date.now(), lastMessageAt: 0, ...roomSettings(extra, type),
+      createdBy: userId, createdAt: Date.now(), updatedAt: Date.now(), lastMessageAt: 0, ...roomSettings(extra, type, { create: true }),
     };
     await nodes().insertOne(doc);
     cacheRoom(doc);
