@@ -408,40 +408,49 @@ try {
     await a.click('.ws-back-btn');
     await a.waitForSelector('.ide-project');
   });
-  await step('board room: cards in the 7 basic views', async () => {
-    await createRoom(a, '보드', '기획 보드');
+  // 보드는 종류별로 따로: 만들 때 종류를 고르고, 그 보드는 그 형식으로만 보임 (보기 탭 없음)
+  const createBoard = async (page, kind, name) => {
+    await page.click('button[aria-label="채팅방·통화방·폴더 만들기"]');
+    await page.click('.type-picker:not(.board-kind-picker) .type-opt:has-text("보드")');
+    await page.click(`.board-kind-picker .type-opt:has(.type-name:text-is("${kind}"))`);
+    await page.fill('.modal input.input', name);
+    await page.click('.modal button.btn.primary');
+    await page.waitForSelector(`.board-kind:has-text("${kind} 보드")`, { timeout: 5000 });
+  };
+  const addQuick = async (page, text, input = '.quick-add-input >> nth=-1') => { await page.fill(input, text); await page.keyboard.press('Enter'); await page.waitForSelector(`:is(.card, .card-table tbody tr):has-text("${text}")`); };
+  const boardRow = (name) => `.tree-row.board:has-text("${name}")`;
+  await step('board rooms: each kind is its own board with its own cards', async () => {
+    await createBoard(a, '트리', '기획 보드');
     await a.waitForSelector('.view-tree', { timeout: 5000 });
-    const addQuick = async (text) => { await a.fill('.quick-add-input >> nth=-1', text); await a.keyboard.press('Enter'); await a.waitForSelector(`.card:has-text("${text}")`); };
-    await addQuick('게임 만들기');
-    await a.hover('.card:has-text("게임 만들기")');
-    await a.click('.card:has-text("게임 만들기") button[title="하위 카드 추가"]');
-    await a.fill('.modal input.input', '전쟁 시뮬레이션');
-    await a.click('.modal button.btn.primary');
-    await a.waitForSelector('.card:has-text("전쟁 시뮬레이션")');
-    await a.hover('.card:has-text("게임 만들기")');
-    await a.click('.card:has-text("게임 만들기") button[title="하위 카드 추가"]');
-    await a.fill('.modal input.input', '무역과 외교');
-    await a.click('.modal button.btn.primary');
-    await a.waitForSelector('.card:has-text("무역과 외교")');
+    if (await a.locator('.board-tab').count()) throw new Error('view tabs still shown');
+    await addQuick(a, '게임 만들기');
+    for (const kid of ['전쟁 시뮬레이션', '무역과 외교']) {
+      await a.hover('.card:has-text("게임 만들기")');
+      await a.click('.card:has-text("게임 만들기") button[title="하위 카드 추가"]');
+      await a.fill('.modal input.input', kid);
+      await a.click('.modal button.btn.primary');
+      await a.waitForSelector(`.card:has-text("${kid}")`);
+    }
     await shot(a, 'board-tree');
-    for (const [label, sel] of [['포스트잇', '.view-sticky .card.note'], ['마인드맵', '.view-mindmap .mind-node'], ['브랜치', '.view-branch .branch-graph circle'], ['타임라인', '.view-timeline .tl-item'], ['토론', '.view-debate .debate-col'], ['칸반', '.view-kanban .kanban-col']]) {
-      await a.click(`.board-tab:has-text("${label}")`);
+    for (const [kind, sel] of [['포스트잇', '.view-sticky .card.note'], ['마인드맵', '.view-mindmap .mind-node'], ['브랜치', '.view-branch .branch-graph circle'], ['타임라인', '.view-timeline .tl-item'], ['토론', '.view-debate .debate-col']]) {
+      await createBoard(a, kind, `${kind} 보드`);
+      await a.waitForFunction(() => /카드 0개/.test(document.querySelector('.board-count')?.textContent || ''), null, { timeout: 5000 }); // 다른 보드의 카드는 보이지 않음
+      await addQuick(a, `${kind} 첫 카드`);
       await a.waitForSelector(sel, { timeout: 5000 });
       await a.waitForTimeout(150);
-      await shot(a, `board-${label}`);
+      await shot(a, `board-${kind}`);
     }
-    // 칸반: 미분류 → 다음 칸으로 옮기면 다른 사용자에게도 반영
-    await a.fill('.kanban-col.st-todo .quick-add-input', '지도 그리기');
-    await a.keyboard.press('Enter');
-    await a.waitForSelector('.kanban-col.st-todo .card:has-text("지도 그리기")');
+    // 칸반: 다음 칸으로 옮기면 다른 사용자에게도 반영
+    await createBoard(a, '칸반', '칸반 보드');
+    await addQuick(a, '지도 그리기', '.kanban-col.st-todo .quick-add-input');
     await a.click('.kanban-col.st-todo .card:has-text("지도 그리기") button[title="진행 중(으)로"]');
     await a.waitForSelector('.kanban-col.st-doing .card:has-text("지도 그리기")');
-    await b.click('.tree-row.board');
-    await b.click('.board-tab:has-text("칸반")');
+    await b.click(boardRow('칸반 보드'));
     await b.waitForSelector('.kanban-col.st-doing .card:has-text("지도 그리기")', { timeout: 5000 });
     // 포스트잇: 끌어서 옮긴 위치가 저장됨
-    await a.click('.board-tab:has-text("포스트잇")');
-    const note = a.locator('.card.note', { hasText: '지도 그리기' });
+    await a.click(boardRow('포스트잇 보드'));
+    const note = a.locator('.card.note', { hasText: '포스트잇 첫 카드' });
+    await note.waitFor({ timeout: 5000 });
     const box = await note.boundingBox();
     await a.mouse.move(box.x + 60, box.y + 20); await a.mouse.down(); await a.mouse.move(box.x + 260, box.y + 140, { steps: 5 }); await a.mouse.up();
     await a.waitForTimeout(400);
@@ -452,7 +461,7 @@ try {
     await a.click('.tree-row.text', { button: 'right' });
     await a.click('.menu-item:has-text("대화를 보드로 변환")');
     await a.waitForSelector('.convert-modal');
-    await a.selectOption('.convert-modal select >> nth=0', 'branch');
+    await a.selectOption('.convert-modal select.board-kind-select', 'branch');
     await a.click('.convert-modal button.btn.primary');
     await a.waitForSelector('.convert-row', { timeout: 5000 });
     const rows = await a.locator('.convert-row').count();
@@ -460,6 +469,7 @@ try {
     await shot(a, 'convert');
     await a.click('.convert-modal button.btn.primary');
     await a.waitForSelector('.view-branch .branch-row', { timeout: 8000 });
+    await a.waitForSelector('.board-kind:has-text("브랜치 보드")');
     // 답장은 하위 카드가 되고, 카드에서 원본 메시지로 이동할 수 있음
     await a.waitForSelector('.view-branch .card:has-text("1번에 대한 답장")');
     await a.waitForTimeout(500);
@@ -467,37 +477,36 @@ try {
     await a.click('.view-branch .card:has-text("1번에 대한 답장") .card-chip.link');
     await a.waitForSelector('.chat-view .msg.flash:has-text("1번에 대한 답장")', { timeout: 5000 });
   });
-  await step('board: table and calendar views, template export → import', async () => {
-    await a.click('.tree-row.board');
-    await a.click('.board-tab:has-text("표")');
-    await a.waitForSelector('.card-table tbody tr', { timeout: 5000 });
-    const row = a.locator('.card-table tbody tr', { hasText: '무역과 외교' });
+  await step('board: table and calendar boards, template export → import', async () => {
+    await createBoard(a, '표', '표 보드');
+    await addQuick(a, '보고서 쓰기');
+    await addQuick(a, '자료 모으기');
+    const row = a.locator('.card-table tbody tr', { hasText: '보고서 쓰기' });
     await row.locator('select[aria-label="상태"]').selectOption('done');
-    await a.click('.board-tab:has-text("칸반")');
-    await a.waitForSelector('.kanban-col.st-done .card:has-text("무역과 외교")', { timeout: 5000 });
-    await a.click('.board-tab:has-text("표")');
+    await a.waitForFunction(() => [...document.querySelectorAll('.card-table tbody tr')].some((r) => r.textContent.includes('보고서 쓰기') && r.querySelector('select[aria-label="상태"]')?.value === 'done'), null, { timeout: 5000 });
     await a.click('.card-table .th-btn:has-text("상태")');
     await a.waitForSelector('.card-table th[aria-sort="ascending"]');
     await shot(a, 'board-table');
-    await a.click('.board-tab:has-text("달력")');
-    await a.waitForSelector('.cal-cell.today .cal-card', { timeout: 5000 });
-    await shot(a, 'board-calendar');
-    await a.click('button[aria-label="다음 달"]');
-    await a.waitForFunction(() => !document.querySelector('.cal-cell.today:not(.other)'));
-    await a.click('.cal-head button:has-text("오늘")');
-    const before = await a.locator('.cal-cell.today .cal-card').count();
+    await createBoard(a, '달력', '달력 보드');
+    await a.waitForSelector('.view-calendar .cal-cell.today', { timeout: 5000 });
     await a.hover('.cal-cell.today');
     await a.click('.cal-cell.today .cal-day button');
     await a.fill('.modal input.input', '달력에서 추가');
     await a.click('.modal button.btn.primary');
-    await a.waitForFunction((n) => /\+\d+개/.test(document.querySelector('.cal-cell.today')?.textContent || '') || document.querySelectorAll('.cal-cell.today .cal-card').length > n, before, { timeout: 5000 });
-    // 템플릿: 내보낸 파일을 새 보드에 가져오면 같은 구조의 카드가 생김
+    await a.waitForSelector('.cal-cell.today .cal-card:has-text("달력에서 추가")', { timeout: 5000 });
+    await shot(a, 'board-calendar');
+    await a.click('button[aria-label="다음 달"]');
+    await a.waitForFunction(() => !document.querySelector('.cal-cell.today:not(.other)'));
+    await a.click('.cal-head button:has-text("오늘")');
+    await a.waitForSelector('.cal-cell.today .cal-card');
+    // 템플릿: 트리 보드에서 내보낸 파일을 새 보드에 가져오면 같은 구조의 카드가 생김
+    await a.click(boardRow('기획 보드'));
+    await a.waitForSelector('.view-tree .card:has-text("전쟁 시뮬레이션")', { timeout: 5000 });
     const count = async () => Number((await a.textContent('.board-count')).match(/\d+/)[0]);
     const n = await count();
     const [dl] = await Promise.all([a.waitForEvent('download', { timeout: 5000 }), (async () => { await a.click('button[aria-label="보드 메뉴"]'); await a.click('.menu-item:has-text("템플릿으로 내보내기")'); })()]);
     const file = await dl.path();
-    await createRoom(a, '보드', '복사한 보드');
-    await a.waitForSelector('.view-tree', { timeout: 5000 });
+    await createBoard(a, '트리', '복사한 보드');
     await a.waitForFunction(() => /카드 0개/.test(document.querySelector('.board-count')?.textContent || ''));
     const [chooser] = await Promise.all([a.waitForEvent('filechooser', { timeout: 5000 }), (async () => { await a.click('button[aria-label="보드 메뉴"]'); await a.click('.menu-item:has-text("템플릿 가져오기")'); })()]);
     await chooser.setFiles({ name: 'x.board.json', mimeType: 'application/json', buffer: readFileSync(file) });

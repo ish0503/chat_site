@@ -21,7 +21,7 @@ import {
 } from './dialogs.js';
 import { errorText } from './errors.js';
 import { enhance } from './codeblock.js';
-import { convertDialog } from './board.js';
+import { convertDialog, BOARD_VIEWS, boardKind } from './board.js';
 import { saveCodeDialog } from './workspace.js';
 
 const GROUP_MS = 7 * 60_000;
@@ -126,7 +126,7 @@ export function createChatView(ctx, { split = false } = {}) {
     if (!room) return;
     const ws = room.type === 'code' || room.type === 'board';
     wsBtn.hidden = !ws || split;
-    if (ws) wsBtn.replaceChildren(icon(room.type === 'code' ? 'code' : 'grid', 16), h('span', {}, room.type === 'code' ? ' 코드' : ' 보드'));
+    if (ws) wsBtn.replaceChildren(icon(room.type === 'code' ? 'code' : 'grid', 16), h('span', {}, room.type === 'code' ? ' 코드' : ` ${BOARD_VIEWS[boardKind(room)].label}`));
     if (room.type === 'dm') {
       const u = data.dmPartner(room);
       const pres = data.presenceOf(u.id);

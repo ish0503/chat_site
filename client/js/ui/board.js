@@ -1,5 +1,5 @@
-// 보드 방: 같은 카드들을 여러 방식으로 보기 (트리 · 포스트잇 · 마인드맵 · 브랜치 · 칸반 · 타임라인 · 토론 · 표 · 달력)
-// 카드는 하나의 데이터(작업 공간 항목 kind: 'card')이고 보기만 바뀌므로, 한 보기에서 고치면 다른 보기에도 그대로 반영됩니다.
+// 보드 방: 종류별로 따로 나뉜 보드 (트리 · 포스트잇 · 마인드맵 · 브랜치 · 칸반 · 타임라인 · 토론 · 표 · 달력)
+// 보드의 종류(방의 view)는 만들 때 정하고 바꾸지 않습니다. 보드마다 자기 카드(작업 공간 항목 kind: 'card')를 따로 가집니다.
 import {
   h, toast, uid, fmtStamp, fmtDate, sameDay, fmtTime, isTouch,
 } from '../util.js';
@@ -9,6 +9,8 @@ import { icon } from './icons.js';
 import { openModal, openMenu, confirmDialog, field } from './common.js';
 import { errorText } from './errors.js';
 
+/** 보드의 종류. 만들 때 정해지고, 예전 보드처럼 값이 없으면 트리 */
+export const boardKind = (room) => (BOARD_VIEWS[room?.view] ? room.view : 'tree');
 export const BOARD_VIEWS = {
   tree: { label: '트리', emoji: '🌳', desc: '주제 → 하위 주제로 정리' },
   sticky: { label: '포스트잇', emoji: '🗒️', desc: '자유롭게 붙이고 옮기기' },
@@ -30,7 +32,7 @@ export function createBoard(host) {
   const { ctx } = host;
   const { data } = ctx;
   const body = h('div', { class: 'board-body' });
-  const tabs = h('div', { class: 'board-tabs', role: 'tablist', 'aria-label': '보기 방식' });
+  const tabs = h('div', { class: 'board-tabs' });
   const el = h('div', { class: 'board-view' }, h('div', { class: 'board-bar' }, tabs), body);
   const collapsed = new Set();
   let view = 'tree';
@@ -47,13 +49,6 @@ export function createBoard(host) {
   const put = guard((patch) => data.putWs(host.roomId, { kind: 'card', ...patch }));
   const add = (fields) => (fields.text?.trim() ? put({ id: uid(), text: fields.text.trim().slice(0, 2000), ...fields }) : null);
 
-  const viewKey = 'cs.boardView';
-  const savedViews = () => { try { return JSON.parse(localStorage.getItem(viewKey)) || {}; } catch { return {}; } };
-  function setView(v) {
-    view = v;
-    try { localStorage.setItem(viewKey, JSON.stringify({ ...savedViews(), [host.roomId]: v })); } catch { /* noop */ }
-    render();
-  }
 
   // ───────── 공통 부품 ─────────
   function quickAdd(placeholder, fields, cls = '') {
@@ -531,15 +526,15 @@ export function createBoard(host) {
 
   function render() {
     const room = data.nodes.get(host.roomId);
-    tabs.replaceChildren(...Object.entries(BOARD_VIEWS).map(([k, v]) => h('button', {
-      class: `board-tab${k === view ? ' active' : ''}`, role: 'tab', 'aria-selected': String(k === view), title: v.desc, onclick: () => setView(k),
-    }, h('span', { 'aria-hidden': 'true' }, v.emoji), ` ${v.label}`)),
+    view = boardKind(room);
+    tabs.replaceChildren(h('span', { class: 'board-kind', title: BOARD_VIEWS[view].desc },
+      h('span', { 'aria-hidden': 'true' }, BOARD_VIEWS[view].emoji), ` ${BOARD_VIEWS[view].label} 보드`),
+    h('span', { class: 'muted small board-kind-desc ellipsis' }, BOARD_VIEWS[view].desc),
     h('span', { class: 'grow' }),
     h('span', { class: 'muted small board-count' }, `카드 ${cards().length}개`),
     host.canEdit ? h('button', { class: 'btn small secondary', title: '이 방의 채팅 내용을 카드로 가져오기', onclick: () => convertDialog(ctx, { roomId: host.roomId, target: host.roomId }) }, icon('message', 14), ' 대화에서 가져오기') : null,
     h('button', {
       class: 'icon-btn', 'aria-label': '보드 메뉴', onclick: (e) => openMenu(e.currentTarget, [
-        data.can('manageNodes') && room?.view !== view ? { label: `'${BOARD_VIEWS[view].label}'을(를) 이 방의 기본 보기로`, icon: 'check', onClick: guard(() => data.updateNode(host.roomId, { view })) } : null,
         { label: '카드 내용 복사 (목록)', icon: 'copy', onClick: () => navigator.clipboard?.writeText(outline()).then(() => toast('복사했습니다.')) },
         cards().length ? { label: '템플릿으로 내보내기 (.board.json)', icon: 'download', onClick: exportTemplate } : null,
         host.canEdit ? { label: '템플릿 가져오기', icon: 'plus', onClick: importTemplate } : null,
@@ -562,11 +557,7 @@ export function createBoard(host) {
 
   return {
     el,
-    open() {
-      const room = data.nodes.get(host.roomId);
-      view = BOARD_VIEWS[savedViews()[host.roomId]] ? savedViews()[host.roomId] : BOARD_VIEWS[room?.view] ? room.view : 'tree';
-      render();
-    },
+    open() { render(); },
     changed() { if (!dragging) render(); },
     close() {},
   };
@@ -593,10 +584,12 @@ export async function convertDialog(ctx, { roomId, messages = null, target = nul
   let method = tasks ? 'tasks' : 'rule';
   let draft = null; // 미리 보기 카드 [{id, parentId, text, …, on}]
   const srcRoom = data.nodes.get(roomId);
-  const viewSel = h('select', { class: 'input' }, Object.entries(BOARD_VIEWS).map(([k, v]) => h('option', { value: k }, `${v.emoji} ${v.label} — ${v.desc}`)));
-  const targetSel = h('select', { class: 'input' }, canCreate ? h('option', { value: '' }, '＋ 새 보드 방 만들기') : null, boards.map((b) => h('option', { value: b.id, selected: b.id === target }, `📋 ${b.name}`)));
+  const viewSel = h('select', { class: 'input board-kind-select', 'aria-label': '새 보드 종류' }, Object.entries(BOARD_VIEWS).map(([k, v]) => h('option', { value: k }, `${v.emoji} ${v.label} — ${v.desc}`)));
+  const targetSel = h('select', { class: 'input' }, canCreate ? h('option', { value: '' }, '＋ 새 보드 방 만들기') : null, boards.map((b) => h('option', { value: b.id, selected: b.id === target }, `${BOARD_VIEWS[boardKind(b)].emoji} ${b.name} (${BOARD_VIEWS[boardKind(b)].label})`)));
   const name = h('input', { class: 'input', maxlength: '100', value: `${data.roomLabel(srcRoom) || '대화'} 정리` });
-  const nameField = field('새 보드 방 이름', name);
+  const nameField = h('div', {}, field('새 보드 종류', viewSel, '보드 종류는 만든 뒤에 바꿀 수 없습니다. 다른 형식이 필요하면 새 보드를 만드세요.'), field('새 보드 방 이름', name));
+  // 카드를 넣을 보드의 종류 (기존 보드면 그 보드의 종류)
+  const kindOfTarget = () => (targetSel.value ? boardKind(data.nodes.get(targetSel.value)) : viewSel.value);
   const methodRow = h('div', { class: 'tpl-picker' });
   const preview = h('div', { class: 'convert-preview' });
   const step2 = h('div', { hidden: true }, h('p', { class: 'muted small' }, '만들 카드를 확인하세요. 체크를 끄면 그 카드는 만들지 않습니다. 만든 뒤에도 자유롭게 고칠 수 있어요.'), preview);
@@ -627,13 +620,13 @@ export async function convertDialog(ctx, { roomId, messages = null, target = nul
     if (method === 'ai') {
       preview.replaceChildren(h('div', { class: 'spinner' }), h('p', { class: 'muted small' }, 'AI가 대화를 읽고 정리하는 중…'));
       step2.hidden = false;
-      const res = await data.aiBoard(roomId, { messageIds: messages ? source.map((m) => m.id) : null, view: viewSel.value });
+      const res = await data.aiBoard(roomId, { messageIds: messages ? source.map((m) => m.id) : null, view: kindOfTarget() });
       draft = draftToCards(res.cards);
       if (res.title && !targetSel.value && name.value.endsWith(' 정리')) name.value = res.title;
     } else if (method === 'tasks') {
       draft = messagesToTasks(source, { nameOf: (m) => (data.user(m.authorId) || m.author)?.nickname || '' });
       if (!draft.length) { draft = null; step2.hidden = true; toast('할 일처럼 보이는 메시지를 찾지 못했습니다. ("~해야 해", "- [ ] 할 일" 같은 표현을 찾습니다)', 'warn'); return; }
-      viewSel.value = 'kanban';
+      if (!targetSel.value) viewSel.value = 'kanban';
     } else draft = messagesToCards(source, { nameOf: (m) => (data.user(m.authorId) || m.author)?.nickname || '' });
     renderPreview();
   }
@@ -644,7 +637,6 @@ export async function convertDialog(ctx, { roomId, messages = null, target = nul
     body: [
       h('p', { class: 'muted small' }, `${srcRoom?.type === 'dm' ? '@' : '#'}${data.roomLabel(srcRoom)}의 메시지 ${source.length}개${messages ? ' (선택한 메시지)' : ' (최근 대화)'}를 카드로 만듭니다. 원본 메시지는 그대로 남고, 카드에서 원본으로 이동할 수 있습니다.`),
       h('div', { class: 'field' }, h('span', { class: 'field-label' }, '변환 방법'), methodRow),
-      field('처음 보여 줄 보기', viewSel, '카드는 하나이고 보기만 바뀌므로 나중에 언제든 다른 보기로 볼 수 있습니다.'),
       field('카드를 넣을 곳', targetSel), nameField, step2,
     ],
     actions: [
@@ -661,7 +653,7 @@ export async function convertDialog(ctx, { roomId, messages = null, target = nul
             let boardId = targetSel.value;
             if (!boardId) boardId = (await data.createNode({ type: 'board', name: name.value.trim() || '새 보드', parentId: srcRoom?.type === 'dm' ? null : srcRoom?.parentId ?? null, view: viewSel.value })).id;
             await data.putWsMany(boardId, chosen.map(({ on, ...c }) => ({ ...c, parentId: ids.has(c.parentId) ? c.parentId : null })));
-            try { localStorage.setItem('cs.boardView', JSON.stringify({ ...(JSON.parse(localStorage.getItem('cs.boardView')) || {}), [boardId]: viewSel.value })); } catch { /* noop */ }
+            try { localStorage.removeItem('cs.boardView'); } catch { /* noop */ } // 예전 '보기 탭' 기억 값 정리
             toast(`카드 ${chosen.length}개를 만들었습니다.`, 'success');
             ctx.openRoom(boardId, { workspace: true, reload: true });
           } catch (e) {

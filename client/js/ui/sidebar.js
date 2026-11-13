@@ -12,7 +12,7 @@ import {
   favorites, roomNotify, personal, archived, drafts,
 } from '../local.js';
 import { errorText } from './errors.js';
-import { convertDialog } from './board.js';
+import { convertDialog, BOARD_VIEWS, boardKind } from './board.js';
 import { install, installable, openInstall } from '../install.js';
 
 const COLLAPSED_KEY = 'cs.collapsed';
@@ -207,7 +207,8 @@ export function createSidebar(ctx) {
     },
     isFolder ? icon(open ? 'chevronDown' : 'chevron', 14, 'chev') : null,
     node.type === 'dm' ? avatar(data.dmPartner(node), 22, { presence: data.presenceOf(data.dmPartner(node).id) })
-      : node.emoji && !isFolder ? h('span', { class: 'node-emoji' }, node.emoji) : icon(isFolder ? (open ? 'folderOpen' : 'folder') : { voice: 'voice', code: 'code', board: 'grid' }[node.type] || 'hash', 18, `node-icon${node.color ? ' colored' : ''}`),
+      : node.emoji && !isFolder ? h('span', { class: 'node-emoji' }, node.emoji)
+        : node.type === 'board' ? h('span', { class: 'node-emoji', title: `${BOARD_VIEWS[boardKind(node)].label} 보드` }, BOARD_VIEWS[boardKind(node)].emoji) : icon(isFolder ? (open ? 'folderOpen' : 'folder') : { voice: 'voice', code: 'code', board: 'grid' }[node.type] || 'hash', 18, `node-icon${node.color ? ' colored' : ''}`),
     h('span', { class: 'tree-name ellipsis' }, isFolder && node.emoji ? `${node.emoji} ${node.name}` : data.roomLabel(node)),
     draft ? h('span', { class: 'draft-mark', title: '보내지 않은 임시 저장 글이 있습니다' }, icon('pencil', 13)) : null,
     node.readonly ? h('span', { class: 'dim', title: '공지 전용' }, '📢') : null,

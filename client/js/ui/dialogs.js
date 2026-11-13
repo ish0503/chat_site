@@ -18,13 +18,13 @@ import { icon } from './icons.js';
 import { errorText } from './errors.js';
 import { enhance } from './codeblock.js';
 import { openInstall, isStandalone } from '../install.js';
+import { BOARD_VIEWS, boardKind } from './board.js';
 
 const TYPE_LABEL = { text: '채팅방', voice: '통화방', code: '코드 작업실', board: '보드', folder: '폴더' };
 const TYPE_INFO = {
   text: ['hash', '메시지·이미지·파일'], voice: ['voice', '음성·영상·화면 공유'], code: ['code', '프로젝트 · 파일 편집 · 실행'],
-  board: ['grid', '트리·포스트잇·마인드맵·칸반…'], folder: ['folder', '방과 폴더를 묶기'],
+  board: ['grid', '칸반·마인드맵·포스트잇 등 종류별 보드'], folder: ['folder', '방과 폴더를 묶기'],
 };
-const BOARD_VIEW_OPTS = [['tree', '🌳 트리'], ['sticky', '🗒️ 포스트잇'], ['mindmap', '🧠 마인드맵'], ['branch', '🌿 브랜치'], ['kanban', '📋 칸반'], ['timeline', '🕒 타임라인'], ['debate', '⚖️ 토론']];
 export const COLORS = ['#5865f2', '#3ba55c', '#faa61a', '#ed4245', '#eb459e', '#9b59b6', '#1abc9c', '#e67e22', '#80848e'];
 const SLOWMODE = [[0, '끄기'], [5, '5초'], [10, '10초'], [30, '30초'], [60, '1분'], [300, '5분'], [900, '15분'], [3600, '1시간']];
 
@@ -85,13 +85,21 @@ export function createNodeDialog(ctx, { parentId = null, type = 'text' } = {}) {
   let current = type;
   let extra = roomFields(current);
   const placeholders = { text: '새 채팅방', voice: '새 통화방', code: '새 코드 작업실', board: '새 보드', folder: '새 폴더' };
-  const viewSel = h('select', { class: 'input' }, BOARD_VIEW_OPTS.map(([v, l]) => h('option', { value: v }, l)));
-  const viewField = field('처음 보기 방식', viewSel, '같은 카드를 여러 방식으로 볼 수 있고, 방 안에서 언제든 바꿀 수 있습니다.');
+  // 보드 종류: 종류마다 따로 된 보드이고, 만든 뒤에는 바꿀 수 없음
+  let boardView = 'tree';
+  const boardRow = h('div', { class: 'type-picker board-kind-picker', role: 'radiogroup', 'aria-label': '보드 종류' });
+  const renderBoardKinds = () => boardRow.replaceChildren(...Object.entries(BOARD_VIEWS).map(([k, v]) => h('button', {
+    type: 'button', role: 'radio', 'aria-checked': String(k === boardView), class: `type-opt${k === boardView ? ' active' : ''}`, title: v.desc,
+    onclick: () => { boardView = k; name.placeholder = `새 ${v.label} 보드`; renderBoardKinds(); },
+  }, h('span', { class: 'board-kind-emoji', 'aria-hidden': 'true' }, v.emoji), h('span', { class: 'type-name' }, v.label), h('span', { class: 'type-desc' }, v.desc))));
+  renderBoardKinds();
+  const viewField = h('div', { class: 'field' }, h('span', { class: 'field-label' }, '보드 종류'), boardRow,
+    h('span', { class: 'field-hint' }, '보드는 종류별로 따로 만들어집니다. 만든 뒤에는 종류를 바꿀 수 없어요.'));
   const render = () => {
     viewField.hidden = current !== 'board';
     typeRow.replaceChildren(...['text', 'voice', 'code', 'board', 'folder'].map((t) => h('button', {
       type: 'button', role: 'radio', 'aria-checked': String(t === current), class: `type-opt${t === current ? ' active' : ''}`,
-      onclick: () => { current = t; name.placeholder = placeholders[t]; topicField.hidden = t === 'folder'; extra = roomFields(t); extraBox.replaceChildren(details()); render(); },
+      onclick: () => { current = t; name.placeholder = t === 'board' ? `새 ${BOARD_VIEWS[boardView].label} 보드` : placeholders[t]; topicField.hidden = t === 'folder'; extra = roomFields(t); extraBox.replaceChildren(details()); render(); },
     }, icon(TYPE_INFO[t][0], 22),
     h('span', { class: 'type-name' }, TYPE_LABEL[t]),
     h('span', { class: 'type-desc' }, TYPE_INFO[t][1]))));
@@ -104,16 +112,16 @@ export function createNodeDialog(ctx, { parentId = null, type = 'text' } = {}) {
   topicField.hidden = current === 'folder';
   openModal({
     title: '만들기',
-    body: [h('div', { class: 'field' }, h('span', { class: 'field-label' }, '종류'), typeRow), field('이름', name), viewField, topicField, field('위치', parent), extraBox],
+    body: [h('div', { class: 'field' }, h('span', { class: 'field-label' }, '종류'), typeRow), viewField, field('이름', name), topicField, field('위치', parent), extraBox],
     actions: [
       { label: '취소' },
       {
         label: '만들기', kind: 'primary', submit: true,
         onClick: async () => {
-          const nm = name.value.trim() || placeholders[current];
+          const nm = name.value.trim() || (current === 'board' ? `새 ${BOARD_VIEWS[boardView].label} 보드` : placeholders[current]);
           try {
             const node = await data.createNode({
-              type: current, name: nm, parentId: parent.value || null, topic: current === 'folder' ? '' : topic.value, ...extra.values(), ...(current === 'board' ? { view: viewSel.value } : {}),
+              type: current, name: nm, parentId: parent.value || null, topic: current === 'folder' ? '' : topic.value, ...extra.values(), ...(current === 'board' ? { view: boardView } : {}),
             });
             if (node.type !== 'folder') ctx.openRoom(node.id);
             else ctx.expandFolder(node.id);
@@ -228,7 +236,7 @@ export function roomInfoDialog(ctx, node) {
   openModal({
     title: `${node.emoji ? `${node.emoji} ` : ''}${node.name}`,
     body: h('dl', { class: 'profile-info info-list' },
-      h('dt', {}, '종류'), h('dd', {}, TYPE_LABEL[node.type]),
+      h('dt', {}, '종류'), h('dd', {}, node.type === 'board' ? `${BOARD_VIEWS[boardKind(node)].emoji} ${BOARD_VIEWS[boardKind(node)].label} 보드` : TYPE_LABEL[node.type]),
       h('dt', {}, '위치'), h('dd', {}, path.length ? path.join(' / ') : '최상위'),
       node.topic ? [h('dt', {}, '설명'), h('dd', {}, node.topic)] : null,
       h('dt', {}, '만든 사람'), h('dd', {}, creator?.nickname || '알 수 없음'),
