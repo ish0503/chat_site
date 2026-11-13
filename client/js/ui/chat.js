@@ -290,7 +290,19 @@ export function createChatView(ctx, { split = false } = {}) {
       class: 'replies-btn', title: '이 메시지에 달린 답장 보기',
       onclick: (e) => openReplies(m, replies, e.currentTarget),
     }, icon('reply', 13), ` 답장 ${replies.length}개`) : null;
-    const main = h('div', { class: 'msg-main' }, fwd, text, atts, renderEmbeds(m), reactEl, repliesEl, status);
+    // 이 메시지에서 만든 보드 카드: 카드의 상태가 여기에도 보이고, 눌러서 바로 바꿀 수 있음 (메시지 ↔ 보드 양방향)
+    const CARD_STATUS = { todo: '할 일', doing: '진행 중', review: '검토', done: '완료' };
+    const cardsEl = m.cards?.length ? h('div', { class: 'msg-cards' }, m.cards.filter((c) => data.nodes.has(c.roomId)).map((c) => h('button', {
+      class: `card-chip link msg-card st-${c.status || 'none'}`, type: 'button', title: '이 메시지에서 만든 보드 카드',
+      onclick: (e) => openMenu(e.currentTarget, [
+        { label: `'${data.nodes.get(c.roomId).name}' 보드에서 보기`, icon: 'grid', onClick: () => ctx.openRoom(c.roomId, { workspace: true }) },
+        ...(data.can('editWorkspace') && data.isOnline ? ['sep', ...[...Object.entries(CARD_STATUS), ['', '상태 없음']].map(([k, label]) => ({
+          label: `${(c.status || '') === k ? '✓ ' : ''}상태: ${label}`, icon: 'check',
+          onClick: async () => { try { await data.putWs(c.roomId, { id: c.id, kind: 'card', status: k || null }); } catch (err) { toast(errorText(err), 'error'); } },
+        }))] : []),
+      ]),
+    }, `📋 ${data.nodes.get(c.roomId).name}${c.status ? ` · ${CARD_STATUS[c.status]}` : ''}`))) : null;
+    const main = h('div', { class: 'msg-main' }, fwd, text, atts, renderEmbeds(m), cardsEl, reactEl, repliesEl, status);
     const actions = isTouch() ? null : h('div', { class: 'msg-actions', role: 'toolbar' },
       data.can('react') ? QUICK_REACTIONS.slice(0, 3).map((emo) => h('button', { class: 'icon-btn tiny emoji', title: emo, onclick: () => react(m, emo) }, emo)) : null,
       data.can('react') ? h('button', { class: 'icon-btn tiny', title: '반응 추가', onclick: (e) => openEmojiPicker(e.currentTarget, (emo) => react(m, emo)) }, icon('smilePlus', 18)) : null,

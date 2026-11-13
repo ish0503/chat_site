@@ -227,6 +227,7 @@ export class DataService extends Emitter {
     s.on('ws:upsert', ({ roomId, items, by }) => this.#applyWs(roomId, items, { by }));
     s.on('ws:remove', ({ roomId, ids }) => this.#removeWs(roomId, ids));
     s.on('ws:focus', (e) => this.emit('wsFocus', e));
+    s.on('ws:cursor', (e) => this.emit('wsCursor', e));
     s.on('call:participants', ({ roomId, list }) => {
       if (list.length) this.calls[roomId] = list; else delete this.calls[roomId];
       this.emit('calls', roomId);
@@ -1015,12 +1016,19 @@ export class DataService extends Emitter {
     if (!this.can('editWorkspace')) throw new OpError('forbidden');
     const t = Date.now();
     const out = [];
-    for (let i = 0; i < items.length; i += 200) {
-      const chunk = items.slice(i, i + 200);
-      const local = chunk.map((it, k) => ({
-        roomId, parentId: null, name: '', order: t + i + k, createdBy: this.me.id, createdAt: t, rev: 0, updatedBy: this.me.id, updatedAt: t, ...it,
+    // 서버는 부모가 먼저 있어야 저장하므로 (구조 검사), 부모 → 자식 순서로 보냄. 화면에서의 순서(order)는 원래 순서 그대로
+    const numbered = items.map((it, k) => ({ order: t + k, ...it }));
+    const byId = new Map(numbered.map((it) => [it.id, it]));
+    const sorted = [];
+    const seen = new Set();
+    const visit = (it) => { if (seen.has(it.id)) return; seen.add(it.id); const p = byId.get(it.parentId); if (p) visit(p); sorted.push(it); };
+    numbered.forEach(visit);
+    for (let i = 0; i < sorted.length; i += 200) {
+      const chunk = sorted.slice(i, i + 200);
+      const local = chunk.map((it) => ({
+        roomId, parentId: null, name: '', createdBy: this.me.id, createdAt: t, rev: 0, updatedBy: this.me.id, updatedAt: t, ...it,
       }));
-      const res = await this.#mutate('ws:putMany', { roomId, items: chunk.map((it, k) => ({ order: t + i + k, ...it })) }, () => this.#applyWs(roomId, local, { by: this.me.id, broadcast: true }));
+      const res = await this.#mutate('ws:putMany', { roomId, items: chunk }, () => this.#applyWs(roomId, local, { by: this.me.id, broadcast: true }));
       if (res?.items) await this.#applyWs(roomId, res.items, { by: this.me.id });
       out.push(...(res?.items || local));
     }
@@ -1044,6 +1052,17 @@ export class DataService extends Emitter {
 
   sendWsFocus(roomId, id) {
     if (this.isOnline) this.socket.emit('ws:focus', { roomId, id });
+  }
+
+  /** 같은 파일을 보는 사람들에게 내 커서 위치(줄 · 칸, 0부터)를 알림 */
+  sendWsCursor(roomId, id, line, col) {
+    if (this.isOnline) this.socket.emit('ws:cursor', { roomId, id, line, col });
+  }
+
+  /** 코드 파일을 AI 가 검토 · 설명 · 리팩터링 제안 (mode: review | explain | refactor) */
+  async aiCode(roomId, { name, content, mode }) {
+    if (!this.isOnline) throw new OpError('offline');
+    return this.request('ai:code', { roomId, name, content, mode }, 180_000);
   }
 
   /** 대화를 AI 로 분석해 보드 카드 초안 받기 (저장은 사용자가 승인한 뒤 putWsMany 로) */

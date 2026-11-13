@@ -13,7 +13,7 @@ import {
 import { RateLimiter, httpLimit } from './ratelimit.js';
 import { createArduinoBuilder, CompileError } from './arduino.js';
 import { createLibraryManager } from './arduino-libs.js';
-import { aiEnabled, askAi, askBoard } from './ai.js';
+import { aiEnabled, askAi, askBoard, askCode } from './ai.js';
 
 const LIMITS = {
   name: 100, topic: 300, content: 4000, nickname: 32, avatar: 300_000, attachments: 10, status: 80, bio: 300, emoji: 8, pollOption: 100, pollOptions: 10,
@@ -27,7 +27,13 @@ const NODE_TYPES = ['folder', 'text', 'voice', 'code', 'board'];
 // 메시지를 주고받을 수 있는 방: 일반 채팅방, 1:1 대화, 코드 작업실, 보드 방 (작업 공간에도 채팅이 딸려 있음)
 const CHAT_TYPES = ['text', 'dm', 'code', 'board'];
 const WORKSPACE_TYPES = ['code', 'board'];
-const BOARD_VIEWS = ['tree', 'sticky', 'mindmap', 'branch', 'kanban', 'timeline', 'debate'];
+// 작업 공간 항목의 구조 규칙: 방 종류마다 만들 수 있는 항목, 항목마다 둘 수 있는 부모
+const WS_ROOM_KINDS = { code: ['project', 'folder', 'file'], board: ['card'] };
+const WS_PARENT_KINDS = { project: [], folder: ['project', 'folder'], file: ['project', 'folder'], card: ['card'] };
+const WS_NEEDS_PARENT = { folder: true, file: true };
+const BOARD_VIEWS = ['tree', 'sticky', 'mindmap', 'branch', 'kanban', 'timeline', 'debate', 'table', 'calendar'];
+/** 메시지 → 카드에 넣을 짧은 글 (client/js/convert.js 의 short 와 같은 규칙) */
+const cardText = (text) => { const t = (text || '').replace(/```[\s\S]*?```/g, ' [코드] ').replace(/\s+/g, ' ').trim(); return t.length > 300 ? `${t.slice(0, 300)}…` : t; };
 // 작업 공간 항목: 코드 작업실의 프로젝트·폴더·파일, 보드 방의 카드
 const WS_KINDS = ['project', 'folder', 'file', 'card'];
 const WS_STATUS = ['todo', 'doing', 'review', 'done'];
@@ -763,8 +769,10 @@ io.on('connection', (socket) => {
     const msgs = await messages().find({ roomId: { $in: ids } }, { projection: { attachments: 1 } }).toArray();
     await deleteFiles(msgs.flatMap((m) => (m.attachments || []).map((a) => a.id)));
     await messages().deleteMany({ roomId: { $in: ids } });
+    const linkedMsgs = (await store.col('wsitems').find({ roomId: { $in: ids }, msgId: { $exists: true, $ne: null } }, { projection: { msgId: 1 } }).toArray()).map((x) => x.msgId);
     await store.col('wsitems').deleteMany({ roomId: { $in: ids } });
     await nodes().deleteMany({ _id: { $in: ids } });
+    if (linkedMsgs.length) await syncCardLinks(linkedMsgs).catch(() => {});
     for (const rid of ids) roomCache.delete(rid);
     for (const rid of ids) {
       for (const p of callList(rid)) {
@@ -959,6 +967,7 @@ io.on('connection', (socket) => {
     const set = { content: text, editedAt: Math.max(Date.now(), current + 1), editHistory };
     await messages().updateOne({ _id: id }, { $set: set });
     emitMsg({ ...m, ...set });
+    if (m.cards?.length) await cardsFollowMessage(id, { content: text });
     return conflict ? { conflict: true } : {};
   });
 
@@ -969,6 +978,7 @@ io.on('connection', (socket) => {
     await messages().deleteOne({ _id: id });
     await deleteFiles((m.attachments || []).map((a) => a.id));
     emitMsgRemove(m);
+    if (m.cards?.length) await cardsFollowMessage(id, { removed: true });
     return {};
   });
 
@@ -982,6 +992,7 @@ io.on('connection', (socket) => {
     await messages().deleteMany({ _id: { $in: ok.map((m) => m._id) } });
     await deleteFiles(ok.flatMap((m) => (m.attachments || []).map((a) => a.id)));
     for (const m of ok) emitMsgRemove(m);
+    for (const m of ok) if (m.cards?.length) await cardsFollowMessage(m._id, { removed: true });
     return { deleted: ok.map((m) => m._id) };
   });
 
@@ -1172,13 +1183,79 @@ io.on('connection', (socket) => {
     }
     return set;
   }
-  /** 항목 하나 저장 (없으면 만들고 있으면 고침). 반환: { doc, conflict } */
+  /**
+   * 저장하기 전 구조 검사에 쓰는 정보: 이 방의 항목(id → { kind, parentId })과, 같은 id 로 다른 방에 이미 있는 항목.
+   * 여러 항목을 한 번에 저장할 때는 앞 항목을 적용한 결과 위에서 다음 항목을 검사하므로, 폴더와 그 안의 파일을 함께 보낼 수 있음.
+   */
+  async function wsView(roomId, list) {
+    const all = await ws().find({ roomId }, { projection: { kind: 1, parentId: 1 } }).toArray();
+    const ids = list.map((x) => x?.id).filter(validId);
+    const same = ids.length ? await ws().find({ _id: { $in: ids } }, { projection: { roomId: 1 } }).toArray() : [];
+    return { known: new Set(all.map((x) => x._id)), items: new Map(all.map((x) => [x._id, { kind: x.kind, parentId: x.parentId ?? null }])), foreign: new Set(same.filter((x) => x.roomId !== roomId).map((x) => x._id)) };
+  }
+  /**
+   * 항목 하나의 구조 검사 (통과하면 view 에 반영). 데이터가 엉키지 않도록:
+   *  · 방 종류에 맞는 항목만 (코드 작업실: 프로젝트 · 폴더 · 파일 / 보드: 카드)
+   *  · 부모는 같은 방에 실제로 있어야 하고, 종류가 맞아야 함 (파일 · 폴더 → 프로젝트 · 폴더 / 카드 → 카드 / 프로젝트는 최상위)
+   *  · 자기 자신이나 자기 하위 항목 안으로 옮길 수 없음
+   */
+  function wsValidate(room, src, view) {
+    if (!src || !validId(src.id) || !WS_KINDS.includes(src.kind)) throw fail('invalid_item');
+    if (!WS_ROOM_KINDS[room.type]?.includes(src.kind)) throw fail('invalid_kind');
+    if (view.foreign.has(src.id)) throw fail('conflict', 409);
+    const cur = view.items.get(src.id);
+    if (cur && cur.kind !== src.kind) throw fail('conflict', 409);
+    if (cur && src.parentId === undefined) return; // 부모를 바꾸지 않는 수정 (내용 · 이름 등)
+    const parentId = validId(src.parentId) ? src.parentId : null;
+    if (cur && parentId === cur.parentId) return;
+    const parent = parentId ? view.items.get(parentId) : null;
+    if (parentId && !parent) throw fail('invalid_parent');
+    if (parent ? !WS_PARENT_KINDS[src.kind].includes(parent.kind) : WS_NEEDS_PARENT[src.kind]) throw fail('invalid_parent');
+    let steps = 0;
+    for (let at = parentId; at; at = view.items.get(at)?.parentId) { if (at === src.id) throw fail('invalid_move'); if (++steps > 5000) throw fail('invalid_move'); }
+    view.items.set(src.id, { kind: src.kind, parentId });
+  }
+
+  /**
+   * 메시지 ↔ 보드 카드 연결 (양방향):
+   *  · 카드 → 메시지: 메시지에서 만든 카드의 상태가 바뀌면 그 메시지에 '보드 카드' 표시(cards)를 갱신해 채팅에서도 보이게 함
+   *  · 메시지 → 카드: 메시지를 고치면 카드 글도 따라 바뀌고(카드 글을 직접 고친 적이 없을 때), 메시지를 지우면 연결만 끊음
+   */
+  async function syncCardLinks(msgIds) {
+    for (const msgId of [...new Set(msgIds.filter(validId))].slice(0, 400)) {
+      const m = await messages().findOne({ _id: msgId });
+      if (!m) continue;
+      const linked = await ws().find({ msgId, kind: 'card' }, { projection: { roomId: 1, status: 1, stance: 1 } }).limit(6).toArray();
+      const cards = linked.map((c) => ({ id: c._id, roomId: c.roomId, status: c.status || null, stance: c.stance || null }));
+      if (JSON.stringify(cards) === JSON.stringify(m.cards || [])) continue;
+      if (cards.length) await messages().updateOne({ _id: msgId }, { $set: { cards } }); else await messages().updateOne({ _id: msgId }, { $unset: { cards: '' } });
+      const { cards: _old, ...rest } = m;
+      emitMsg(cards.length ? { ...rest, cards } : rest);
+    }
+  }
+  /** 메시지가 바뀌거나 지워졌을 때 연결된 카드에 반영 */
+  async function cardsFollowMessage(msgId, { content, removed }) {
+    const linked = await ws().find({ msgId, kind: 'card' }).toArray();
+    const byRoom = new Map();
+    for (const c of linked) {
+      const set = removed ? { msgId: null } : c.textEdited ? null : { text: cardText(content) };
+      if (!set || (set.text !== undefined && (set.text === c.text || !set.text))) continue;
+      Object.assign(set, { updatedAt: Date.now(), rev: (c.rev || 1) + 1 });
+      await ws().updateOne({ _id: c._id }, { $set: set });
+      if (!byRoom.has(c.roomId)) byRoom.set(c.roomId, []);
+      byRoom.get(c.roomId).push(wsOut({ ...c, ...set }));
+    }
+    for (const [roomId, items] of byRoom) io.emit('ws:upsert', { roomId, items, by: null });
+  }
+
+  /** 항목 하나 저장 (없으면 만들고 있으면 고침). 구조 검사(wsValidate)를 통과한 뒤에 부름. 반환: { doc, conflict } */
   async function wsSave(roomId, src) {
     if (!src || !validId(src.id) || !WS_KINDS.includes(src.kind)) throw fail('invalid_item');
     const existing = await ws().findOne({ _id: src.id });
     const t = Date.now();
     if (!existing) {
       const fields = wsFields(src, src.kind);
+      if (src.kind === 'project') fields.parentId = null;
       if (src.kind !== 'card' && !fields.name) throw fail('invalid_name');
       const doc = {
         _id: src.id, roomId, kind: src.kind, parentId: null, name: '', order: t, ...fields, createdBy: userId, createdAt: t, updatedBy: userId, updatedAt: t, rev: 1,
@@ -1188,13 +1265,9 @@ io.on('connection', (socket) => {
     }
     if (existing.roomId !== roomId || existing.kind !== src.kind) throw fail('conflict', 409);
     const set = wsFields(src, existing.kind);
+    if (existing.kind === 'project') delete set.parentId; // 프로젝트는 항상 최상위
+    if (existing.kind === 'card' && existing.msgId && set.text !== undefined && set.text !== existing.text) set.textEdited = true; // 카드 글을 직접 고쳤으면 원본 메시지를 따라가지 않음
     if (set.name === '' && existing.kind !== 'card') delete set.name;
-    // 자기 자신이나 자기 하위 항목 안으로는 옮길 수 없음
-    if (set.parentId && set.parentId !== existing.parentId) {
-      const all = await ws().find({ roomId }, { projection: { parentId: 1 } }).toArray();
-      const byId = new Map(all.map((x) => [x._id, x]));
-      for (let cur = byId.get(set.parentId); cur; cur = byId.get(cur.parentId)) if (cur._id === existing._id) throw fail('invalid_move');
-    }
     // 동시 편집: 내가 보던 버전(baseRev) 이후 다른 사람이 내용을 바꿨으면 conflict 로 알림. 덮어쓴 내용은 버전 기록에 남음
     const changed = set.content !== undefined && set.content !== existing.content;
     const conflict = changed && Number.isFinite(Number(src.baseRev)) && Number(src.baseRev) !== existing.rev;
@@ -1215,34 +1288,44 @@ io.on('connection', (socket) => {
   });
 
   on('ws:put', { perm: 'editWorkspace' }, async ({ roomId, item }) => {
-    await accessWorkspace(roomId);
+    const room = await accessWorkspace(roomId);
+    const view = await wsView(roomId, [item]);
+    wsValidate(room, item, view);
     if (!(await ws().findOne({ _id: item?.id }, { projection: { _id: 1 } })) && (await ws().countDocuments({ roomId })) >= WS_LIMITS.perRoom) throw fail('workspace_full', 413);
+    const before = item?.kind === 'card' ? (await ws().findOne({ _id: item.id }, { projection: { msgId: 1 } }))?.msgId : null;
     const { doc, conflict } = await wsSave(roomId, item);
     io.emit('ws:upsert', { roomId, items: [wsOut(doc)], by: userId });
+    if (doc.kind === 'card' && (doc.msgId || before)) await syncCardLinks([doc.msgId, before].filter(Boolean));
     return { item: wsOut(doc), ...(conflict ? { conflict: true } : {}) };
   });
 
   // 여러 항목 한 번에 (프로젝트 템플릿, 파일 가져오기, 대화 → 보드 변환)
   on('ws:putMany', { perm: 'editWorkspace', cost: 5 }, async ({ roomId, items }) => {
-    await accessWorkspace(roomId);
+    const room = await accessWorkspace(roomId);
     const list = Array.isArray(items) ? items.slice(0, WS_LIMITS.batch) : [];
+    // 전체를 먼저 검사: 하나라도 잘못되면 아무것도 저장하지 않음 (반쯤 저장된 프로젝트가 남지 않게)
+    const view = await wsView(roomId, list);
+    for (const it of list) wsValidate(room, it, view);
+    for (const it of list) if (it.kind !== 'card' && !view.known.has(it.id) && !cleanStr(it.name, WS_LIMITS.name)) throw fail('invalid_name'); // 새 항목은 이름이 있어야 함
     if ((await ws().countDocuments({ roomId })) + list.length > WS_LIMITS.perRoom) throw fail('workspace_full', 413);
     const saved = [];
     for (const it of list) saved.push(wsOut((await wsSave(roomId, it)).doc));
     if (saved.length) io.emit('ws:upsert', { roomId, items: saved, by: userId });
+    await syncCardLinks(saved.filter((x) => x.kind === 'card' && x.msgId).map((x) => x.msgId));
     return { items: saved };
   });
 
   // 삭제: 하위 항목(폴더 안의 파일, 카드의 하위 카드)도 함께
   on('ws:delete', { perm: 'editWorkspace' }, async ({ roomId, ids }) => {
     await accessWorkspace(roomId);
-    const all = await ws().find({ roomId }, { projection: { parentId: 1 } }).toArray();
+    const all = await ws().find({ roomId }, { projection: { parentId: 1, msgId: 1 } }).toArray();
     const have = new Set(all.map((x) => x._id));
     const del = (Array.isArray(ids) ? ids : []).filter((x) => have.has(x));
     for (let i = 0; i < del.length; i++) for (const x of all) if (x.parentId === del[i] && !del.includes(x._id)) del.push(x._id);
     if (del.length) {
       await ws().deleteMany({ _id: { $in: del } });
       io.emit('ws:remove', { roomId, ids: del, by: userId });
+      await syncCardLinks(all.filter((x) => del.includes(x._id) && x.msgId).map((x) => x.msgId));
     }
     return { ids: del };
   });
@@ -1257,6 +1340,26 @@ io.on('connection', (socket) => {
   // 누가 어떤 파일을 열고 있는지 (저장하지 않는 실시간 표시)
   on('ws:focus', { db: false }, async ({ roomId, id }) => {
     if (typeof roomId === 'string' && WORKSPACE_TYPES.includes(roomCache.get(roomId)?.type)) socket.broadcast.emit('ws:focus', { roomId, id: validId(id) ? id : null, userId });
+  });
+
+  // 같은 파일을 보는 사람들에게 내 커서 위치를 알림 (저장하지 않음)
+  on('ws:cursor', { db: false, limit: false }, async ({ roomId, id, line, col }) => {
+    if (typeof roomId !== 'string' || !WORKSPACE_TYPES.includes(roomCache.get(roomId)?.type) || !validId(id)) return;
+    socket.broadcast.emit('ws:cursor', { roomId, id, userId, line: num(line, 0, 1e6) ?? 0, col: num(col, 0, 1e4) ?? 0 });
+  });
+
+  // 코드 파일을 AI 가 검토 · 설명 · 리팩터링 제안 (저장하지 않음, 결과만 돌려줌)
+  on('ai:code', { perm: 'useAi' }, async ({ roomId, name, content, mode }) => {
+    if (!aiEnabled()) throw fail('ai_disabled', 501);
+    await accessWorkspace(roomId);
+    if (typeof content !== 'string' || !content.trim()) throw fail('empty');
+    if (content.length > WS_LIMITS.content) throw fail('file_too_large', 413);
+    if (!limiters.ai.take(userId)) throw Object.assign(fail('rate_limited', 429), { retryAfter: limiters.ai.retryAfter(userId) });
+    try {
+      return await askCode({ mode: ['review', 'explain', 'refactor'].includes(mode) ? mode : 'review', name: cleanStr(name, WS_LIMITS.name) || 'code', content });
+    } catch (e) {
+      throw fail(e.code || 'ai_unavailable', 503);
+    }
   });
 
   // 대화를 AI 로 분석해 보드 카드 초안 만들기 (저장하지 않음 → 사용자가 미리 보고 승인하면 ws:putMany 로 저장)

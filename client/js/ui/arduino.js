@@ -104,7 +104,9 @@ export function createArduinoPane(host) {
   try { if (localStorage.getItem('cs.ardu.mode') === 'simple') modeSel.value = 'simple'; } catch { /* noop */ }
   const serialEl = h('div', { class: 'ardu-serial' },
     h('div', { class: 'run-head' }, h('strong', {}, '시리얼 모니터'), statusEl,
-      h('span', { class: 'run-actions' }, modeSel, runBtn, h('button', { class: 'btn small ghost', type: 'button', onclick: () => clearLog() }, '지우기'))),
+      h('span', { class: 'run-actions' }, modeSel, runBtn,
+        host.onShare ? h('button', { class: 'btn small ghost', type: 'button', title: '시리얼 출력을 이 방의 채팅으로 보내기', onclick: () => { flushLog(); host.onShare(log.textContent); } }, '채팅으로') : null,
+        h('button', { class: 'btn small ghost', type: 'button', onclick: () => clearLog() }, '지우기'))),
     log,
     h('form', { class: 'ardu-send', onsubmit: (e) => { e.preventDefault(); sendSerial(); } }, sendInput, endSel, h('button', { class: 'btn small secondary', type: 'submit' }, '보내기')));
   const el = h('div', { class: 'ardu' }, circuitEl, serialEl);

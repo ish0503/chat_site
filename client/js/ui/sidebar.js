@@ -97,6 +97,7 @@ export function createSidebar(ctx) {
         chat && !ctx.isSplitOpen?.(node.id) ? { label: '분할 화면으로 열기', icon: 'columns', onClick: () => ctx.openSplit(node.id) } : null,
         chat ? { label: '읽음으로 표시', icon: 'check', onClick: () => ctx.markRead(node.id) } : null,
         chat && data.can('editWorkspace') ? { label: '대화를 보드로 변환', icon: 'grid', onClick: () => convertDialog(ctx, { roomId: node.id }) } : null,
+        chat && data.can('editWorkspace') ? { label: '대화에서 할 일 뽑기', icon: 'check', onClick: () => convertDialog(ctx, { roomId: node.id, tasks: true }) } : null,
         chat && data.aiEnabled ? { label: 'AI 요약 · 질문', icon: 'sparkle', onClick: () => aiDialog(ctx, node.id) } : null,
         chat ? 'sep' : null,
         chat ? { label: `${notify === 'all' ? '✓ ' : ''}알림: 모든 메시지`, icon: 'bell', onClick: () => roomNotify.set(node.id, 'all') } : null,

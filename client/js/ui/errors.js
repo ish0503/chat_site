@@ -29,6 +29,7 @@ const MESSAGES = {
   ai_unavailable: 'AI 도우미에 연결할 수 없습니다.',
   workspace_full: '이 방의 작업 공간이 가득 찼습니다. 필요 없는 항목을 지워 주세요.',
   invalid_item: '저장할 수 없는 항목입니다.',
+  invalid_kind: '이 방에는 만들 수 없는 항목입니다. (코드 작업실: 프로젝트 · 폴더 · 파일 / 보드: 카드)',
   invalid_backup: '올바른 백업 파일이 아닙니다.',
   discarded: '동기화 대기열에서 취소한 메시지입니다.',
   user_deleted: '삭제된 계정입니다. 메시지를 보낼 수 없습니다.',
